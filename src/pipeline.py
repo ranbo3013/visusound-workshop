@@ -169,7 +169,7 @@ def run_localization(
         # ---- Step 3: 配音 ----
         wavs: list[str] = []
         for i, b in enumerate(blocks):
-            res = tts.generate_mock_audio(b["translated"], voice_id=voice_id, emotion="中性")
+            res = tts.generate_audio(b["translated"], voice_id=voice_id, emotion="中性")
             wavs.append(res.get("filename", ""))
             rp(2, f"配音 {i + 1}/{len(blocks)}", "running")
         rp(2, "配音完成", "done")

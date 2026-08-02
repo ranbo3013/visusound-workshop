@@ -1175,7 +1175,7 @@ async def api_tts_generate(req: Request):
         volume = int(data.get("volume", 0))
     except (ValueError, TypeError):
         rate, pitch, volume = 1.0, 0, 0
-    res = tts.generate_mock_audio(
+    res = tts.generate_audio(
         text,
         voice_id=data.get("voice_id", "warm_f"),
         emotion=data.get("emotion", "中性"),
@@ -1183,7 +1183,7 @@ async def api_tts_generate(req: Request):
         pitch=pitch,
         volume=volume,
     )
-    return {"success": True, "mode": "mock", **res}
+    return {"success": True, **res}
 
 
 @app.post("/api/tts/batch")
@@ -1198,7 +1198,7 @@ async def api_tts_batch(req: Request):
         t = (it.get("text") or "").strip()
         if not t:
             continue
-        res = tts.generate_mock_audio(
+        res = tts.generate_audio(
             t,
             voice_id=it.get("voice_id", "warm_f"),
             emotion=it.get("emotion", "中性"),
@@ -1207,7 +1207,7 @@ async def api_tts_batch(req: Request):
         res["text"] = t
         res["role"] = it.get("role", "")
         results.append(res)
-    return {"success": True, "mode": "mock", "count": len(results), "items": results}
+    return {"success": True, "count": len(results), "items": results}
 
 
 @app.post("/api/tts/clone")
@@ -1219,6 +1219,21 @@ async def api_tts_clone(req: Request):
         return JSONResponse({"error": "name required"}, status_code=400)
     res = tts.clone_mock_voice(name, data.get("source", ""), data.get("segment", ""))
     return {"success": True, "mode": "mock", **res}
+
+
+@app.get("/api/tts/status")
+async def api_tts_status():
+    """返回当前 TTS 引擎状态：真实火山 / Mock，供前端展示徽章。"""
+    cfg = tts.get_tts_config()
+    if cfg:
+        return {
+            "mode": "volc",
+            "provider": cfg["provider"],
+            "auth": cfg["auth"],
+            "resource_id": cfg["resource_id"],
+            "speakers": list(tts.VOLC_SPEAKERS.values()),
+        }
+    return {"mode": "mock", "provider": None}
 
 
 # ---------------------------------------------------------------------------
@@ -1909,6 +1924,15 @@ def settings_body() -> str:
       </div>
 
       <div class="card">
+        <div class="section-head"><span class="section-title">配音引擎（TTS）</span></div>
+        <div class="analysis-bar" id="ttsStatus"></div>
+        <div class="notice notice-amber" style="margin-top:12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <span>真实配音走<b>火山引擎·豆包 TTS 大模型 2.0</b>。在 <code class="font-mono">.env</code> 填入 <code class="font-mono">VOLC_TTS_API_KEY</code>（火山控制台 API Key）即自动启用；留空则使用 Mock 占位音轨。<b>修改后需重启服务</b>。</span>
+        </div>
+      </div>
+
+      <div class="card">
         <div class="section-head"><span class="section-title">偏好</span></div>
         <div style="margin-bottom:16px">
           <label class="field-label">默认字幕语言</label>
@@ -1940,6 +1964,10 @@ def settings_body() -> str:
         $('llmStatus').innerHTML = s.configured
           ? '<span class="tag tag-accent">已接入真实大模型</span><span class="tag tag-purple">'+escapeHtml(s.provider||'LLM')+'</span>'
           : '<span class="tag tag-amber">未接入（使用 Mock 模板）</span>';
+        const t=await (await fetch('/api/tts/status')).json();
+        $('ttsStatus').innerHTML = t.mode==='volc'
+          ? '<span class="tag tag-accent">真实火山 TTS</span><span class="tag tag-purple">'+escapeHtml(t.resource_id||'volc')+'</span>'
+          : '<span class="tag tag-amber">Mock 占位（未配置 VOLC_TTS_API_KEY）</span>';
         const set=await (await fetch('/api/settings')).json();
         if(set.default_lang) $('prefLang').value=set.default_lang;
         if(set.default_model) $('prefModel').value=set.default_model;
@@ -1959,7 +1987,7 @@ def settings_body() -> str:
 
 def tts_body() -> str:
     return '''
-    <div class="page-head"><h1>AI 配音</h1><p>文本转语音 · 多情绪、多参数控制 · Mock 引擎</p></div>
+    <div class="page-head"><h1>AI 配音</h1><p>文本转语音 · 多情绪、多参数控制 <span id="ttsBadge"></span></p></div>
     <div class="grid grid-2">
       <div class="card">
         <div class="section-head"><span class="section-title">文本输入</span></div>
@@ -1978,7 +2006,7 @@ def tts_body() -> str:
           </div>
         </div>
         <button class="btn btn-primary mt-16" id="genBtn" style="width:100%">生成配音</button>
-        <div class="notice notice-amber" style="margin-top:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>当前为 Mock 引擎：生成占位音频，时长按字数估算。接入真实 TTS 后此处输出真实人声。</span></div>
+        <div class="notice notice-amber" id="ttsNote" style="margin-top:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>当前为 Mock 引擎：生成占位音频，时长按字数估算。接入真实 TTS 后此处输出真实人声。</span></div>
       </div>
       <div class="card">
         <div class="section-head"><span class="section-title">选择声音</span><span class="tag" id="voiceCount" style="margin-left:auto">0</span></div>
@@ -1994,6 +2022,21 @@ def tts_body() -> str:
     <script>
     (function(){
       const $=id=>document.getElementById(id);
+      // 引擎状态徽章 + 动态提示
+      (async()=>{
+        try{
+          const t=await (await fetch('/api/tts/status')).json();
+          const b=$('ttsBadge');
+          if(b) b.outerHTML = t.mode==='volc'
+            ? '<span class="tag tag-accent">真实火山 TTS</span>'
+            : '<span class="tag tag-amber">Mock 引擎</span>';
+          const n=$('ttsNote');
+          if(n) n.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>'+
+            (t.mode==='volc'
+              ? '真实引擎：输出火山·豆包 TTS 大模型 2.0 人声。'
+              : 'Mock 引擎：占位音频。在 .env 配置 VOLC_TTS_API_KEY 后自动启用真实人声。')+'</span>';
+        }catch(e){}
+      })();
       let curVoice=null, curEm='中性';
       document.querySelectorAll('#emotionGroup .emotion-btn').forEach(b=>b.addEventListener('click',()=>{
         document.querySelectorAll('#emotionGroup .emotion-btn').forEach(x=>x.classList.remove('active'));
