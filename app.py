@@ -437,6 +437,79 @@ async def api_ocr(
 # API: Transcribe — speech-to-text via Whisper
 # ---------------------------------------------------------------------------
 
+def _transcribe_with_whisper(audio_path: str, language: str = "auto",
+                             model_size: str = "small", cleanup_source: bool = False):
+    """Run Whisper on an existing audio file and return a JSONResponse with text.
+
+    Args:
+        audio_path: Absolute/relative path to an audio file on disk.
+        language: Language code ('auto', 'zh', 'en', 'ja', ...).
+        model_size: Whisper model size ('tiny', 'base', 'small', ...).
+        cleanup_source: If True, delete the source audio after transcription.
+    """
+    try:
+        import whisper
+    except ImportError:
+        return JSONResponse(
+            {"error": "Whisper not installed. Run: pip install openai-whisper"},
+            status_code=500,
+        )
+    try:
+        if not audio_path or not Path(audio_path).exists():
+            return JSONResponse({"error": "Failed to prepare audio."}, status_code=500)
+
+        print(f"[DEBUG] Loading Whisper model '{model_size}'...")
+        model = whisper.load_model(model_size)
+
+        whisper_opts: dict = {}
+        if language and language != "auto":
+            whisper_opts["language"] = language
+
+        print(f"[DEBUG] Transcribing {audio_path} (lang={language})...")
+        result = model.transcribe(audio_path, **whisper_opts)
+
+        segments = result.get("segments", [])
+        paragraph_lines = [seg["text"].strip() for seg in segments if seg["text"].strip()]
+        full_text = "\n\n".join(paragraph_lines)
+
+        # Convert Traditional Chinese -> Simplified Chinese for zh output
+        if not language or language == "auto" or language == "zh":
+            try:
+                import zhconv
+                full_text = zhconv.convert(full_text, "zh-hans")
+                for seg in segments:
+                    seg["text"] = zhconv.convert(seg["text"].strip(), "zh-hans")
+            except Exception:
+                pass
+
+        # Save full text + SRT
+        result_name = f"transcript_{Path(audio_path).stem}.txt"
+        (UPLOAD_DIR / result_name).write_text(full_text, encoding="utf-8")
+        srt_name = f"transcript_{Path(audio_path).stem}.srt"
+        srt_lines = []
+        for i, seg in enumerate(segments, 1):
+            start = _fmt_ts(seg["start"]); end = _fmt_ts(seg["end"])
+            text = seg["text"].strip()
+            srt_lines.append(f"{i}\n{start} --> {end}\n{text}\n")
+        (UPLOAD_DIR / srt_name).write_text("\n".join(srt_lines), encoding="utf-8")
+
+        detected_lang = result.get("language", language or "unknown")
+        return JSONResponse({
+            "success": True,
+            "text": full_text,
+            "language": detected_lang,
+            "segments": len(segments),
+            "files": {"txt": result_name, "srt": srt_name},
+        })
+    except FileNotFoundError:
+        return JSONResponse({"error": "ffmpeg not found. Install: brew install ffmpeg"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": f"Transcription failed: {e}"}, status_code=500)
+    finally:
+        if cleanup_source and audio_path and Path(audio_path).exists():
+            Path(audio_path).unlink(missing_ok=True)
+
+
 @app.post("/api/transcribe")
 async def api_transcribe(
     video_url: str = Form(""),
@@ -453,18 +526,9 @@ async def api_transcribe(
         file: Uploaded video/audio file (optional if URL provided).
     """
     try:
-        import whisper
-    except ImportError:
-        return JSONResponse(
-            {"error": "Whisper not installed. Run: pip install openai-whisper"},
-            status_code=500,
-        )
+        # Step 1: Get a local audio file
+        audio_path = None
 
-    # Step 1: Get a local audio file
-    audio_path = None
-    temp_dir = None
-
-    try:
         if file and file.filename:
             # Uploaded file
             audio_path = str(UPLOAD_DIR / f"transcribe_{file.filename}")
@@ -508,78 +572,32 @@ async def api_transcribe(
         if not audio_path or not Path(audio_path).exists():
             return JSONResponse({"error": "Failed to prepare audio."}, status_code=500)
 
-        # Step 2: Run Whisper
-        print(f"[DEBUG] Loading Whisper model '{model_size}'...")
-        model = whisper.load_model(model_size)
-
-        whisper_opts = {}
-        if language and language != "auto":
-            whisper_opts["language"] = language
-
-        print(f"[DEBUG] Transcribing {audio_path} (lang={language})...")
-        result = model.transcribe(audio_path, **whisper_opts)
-
-        # Step 3: Format output — use segments for proper sentence breaks
-        segments = result.get("segments", [])
-
-        # Build properly formatted text: each segment = one paragraph
-        paragraph_lines = []
-        for seg in segments:
-            text = seg["text"].strip()
-            if text:
-                paragraph_lines.append(text)
-
-        # Full text with paragraph breaks
-        full_text = "\n\n".join(paragraph_lines)
-
-        # Also build a continuous version (single line per segment)
-        line_text = "\n".join(paragraph_lines)
-
-        # Convert Traditional Chinese → Simplified Chinese for zh output
-        if not language or language == "auto" or language == "zh":
-            import zhconv
-            full_text = zhconv.convert(full_text, "zh-hans")
-            # Also update segment texts for SRT output
-            for i, seg in enumerate(segments):
-                seg["text"] = zhconv.convert(seg["text"].strip(), "zh-hans")
-
-        # Save full text
-        result_name = f"transcript_{Path(audio_path).stem}.txt"
-        result_path = UPLOAD_DIR / result_name
-        result_path.write_text(full_text, encoding="utf-8")
-
-        # Save SRT with timestamps
-        srt_name = f"transcript_{Path(audio_path).stem}.srt"
-        srt_path = UPLOAD_DIR / srt_name
-        srt_lines = []
-        for i, seg in enumerate(segments, 1):
-            start = _fmt_ts(seg["start"])
-            end = _fmt_ts(seg["end"])
-            text = seg["text"].strip()
-            srt_lines.append(f"{i}\n{start} --> {end}\n{text}\n")
-        srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
-
-        detected_lang = result.get("language", language or "unknown")
-
-        return JSONResponse({
-            "success": True,
-            "text": full_text,
-            "language": detected_lang,
-            "segments": len(segments),
-            "files": {
-                "txt": result_name,
-                "srt": srt_name,
-            },
-        })
+        # Step 2: Run Whisper (source temp file -> cleanup after)
+        return _transcribe_with_whisper(audio_path, language, model_size, cleanup_source=True)
 
     except FileNotFoundError:
         return JSONResponse({"error": "ffmpeg not found. Install: brew install ffmpeg"}, status_code=500)
     except Exception as e:
         return JSONResponse({"error": f"Transcription failed: {e}"}, status_code=500)
-    finally:
-        # Clean up audio file
-        if audio_path and Path(audio_path).exists():
-            Path(audio_path).unlink(missing_ok=True)
+
+
+@app.post("/api/comment/transcribe-record")
+async def comment_transcribe_record(
+    filename: str = Form(...),
+    language: str = Form("auto"),
+    model_size: str = Form("small"),
+):
+    """Transcribe an already-recorded system-audio file (kept on disk) into text.
+
+    Used by the comment page's 'record system sound -> text -> correct -> analyze' flow.
+    The recording file lives in UPLOAD_DIR, so we transcribe it server-side without
+    re-uploading any bytes.
+    """
+    audio_path = str(UPLOAD_DIR / filename)
+    if not Path(audio_path).exists():
+        return JSONResponse({"error": f"录音文件不存在: {filename}"}, status_code=404)
+    # Keep the source recording file (don't delete it after transcription).
+    return _transcribe_with_whisper(audio_path, language, model_size, cleanup_source=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2632,15 +2650,30 @@ def comment_body() -> str:
         <textarea class="input" id="rawText" rows="2" placeholder="把视频字幕 / 口播文案粘贴到这里…"></textarea>
       </div>
       <div class="audio-transcribe">
-        <label class="field-label">🎧 或上传本机音频 / 视频，自动转写为口播文字</label>
-        <div class="row" style="gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <label class="field-label">🎧 录下本机正在播放的声音 → 解析成口播文字</label>
+
+        <!-- 系统录音主流程 -->
+        <div class="row rec-controls" style="gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" id="recordBtn">🎙 开始录制系统声音</button>
+          <button class="btn btn-danger btn-sm" id="stopBtn" style="display:none">⏹ 停止并转写</button>
+          <span class="rec-indicator" id="recIndicator" style="display:none">
+            <span class="rec-dot"></span><span id="recTime">00:00</span>
+            <span class="muted">· 正在录系统声音</span>
+          </span>
+          <span id="recHint" class="muted" style="font-size:12px">需 BlackHole：brew install blackhole-2ch</span>
+        </div>
+
+        <!-- 或上传文件（备选） -->
+        <div class="row" style="gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">
+          <span class="muted" style="font-size:13px">或上传音频 / 视频文件：</span>
           <label class="btn btn-secondary btn-sm" style="cursor:pointer">
             选择文件
             <input type="file" id="audioFile" accept="audio/*,video/*" hidden />
           </label>
           <span id="audioName" class="muted" style="font-size:13px">未选择文件</span>
-          <button class="btn btn-primary btn-sm" id="transcribeBtn" style="margin-left:auto">转写并填入</button>
+          <button class="btn btn-ghost btn-sm" id="transcribeBtn" style="margin-left:auto">转写并填入</button>
         </div>
+
         <div class="notice notice-accent" id="transcribeNotice" style="margin-top:10px;display:none"><span></span></div>
       </div>
       <div class="slider-row">
@@ -2668,7 +2701,7 @@ def comment_body() -> str:
         </div>
         <div class="row" style="margin-left:auto;gap:10px">
           <button class="btn btn-secondary" id="resetBtn">清空</button>
-          <button class="btn btn-primary" id="genBtn">分析并生成评论</button>
+          <button class="btn btn-primary" id="genBtn">分析文字内容</button>
         </div>
       </div>
       <div class="notice notice-amber" id="modeNotice" style="margin-top:14px">
@@ -2700,6 +2733,56 @@ def comment_body() -> str:
         const f = e.target.files[0];
         $('audioName').textContent = f ? ('已选择：' + f.name) : '未选择文件';
       });
+      // —— 系统录音 → 解析成文字 → 纠正 → 分析评论 ——
+      let recTimer = null, recStartTs = 0;
+      const fmtRec = sec => { const m=String(Math.floor(sec/60)).padStart(2,'0'); const s=String(Math.floor(sec%60)).padStart(2,'0'); return m+':'+s; };
+      $('recordBtn').addEventListener('click', async () => {
+        $('recordBtn').disabled = true;
+        setTransNotice('notice-amber', '正在启动系统录音（BlackHole）…');
+        try {
+          const fd = new FormData(); fd.append('format', 'wav');
+          const r = await fetch('/api/record/start', {method:'POST', body: fd});
+          const d = await r.json();
+          if (d.error) { setTransNotice('notice-amber', '无法录音：' + d.error); $('recordBtn').disabled = false; return; }
+          $('recordBtn').style.display = 'none';
+          $('stopBtn').style.display = '';
+          $('recIndicator').style.display = '';
+          $('recHint').style.display = 'none';
+          recStartTs = Date.now();
+          recTimer = setInterval(async () => {
+            const s = await (await fetch('/api/record/status')).json().catch(()=>({recording:true}));
+            const el = (Date.now() - recStartTs) / 1000;
+            $('recTime').textContent = fmtRec(s.elapsed_seconds != null ? s.elapsed_seconds : el);
+          }, 500);
+          setTransNotice('notice-amber', '● 正在录制本机播放的声音，播放完想录的内容后点「停止并转写」。');
+        } catch (err) {
+          setTransNotice('notice-amber', '请求失败：' + err);
+          $('recordBtn').disabled = false;
+        }
+      });
+      $('stopBtn').addEventListener('click', async () => {
+        clearInterval(recTimer);
+        $('stopBtn').disabled = true; $('stopBtn').textContent = '停止并转写…';
+        setTransNotice('notice-amber', '录音已停止，正在解析为文字（首次可能稍慢）…');
+        try {
+          const s = await (await fetch('/api/record/stop', {method:'POST'})).json();
+          if (s.error) { setTransNotice('notice-amber', '停止失败：' + s.error); return; }
+          const fd = new FormData(); fd.append('filename', s.filename);
+          const t = await (await fetch('/api/comment/transcribe-record', {method:'POST', body: fd})).json();
+          if (t.error) { setTransNotice('notice-amber', '解析失败：' + t.error); return; }
+          $('rawText').value = t.text || '';
+          $('videoUrl').value = '';
+          setTransNotice('notice-accent', '✅ 已识别 ' + (t.text ? t.text.length : 0) + ' 字口播文字（语言 ' + (t.language || 'auto') + '，' + (t.segments || 0) + ' 句）。请核对，有误可直接在上方修改，确认后点「分析文字内容」。');
+        } catch (err) {
+          setTransNotice('notice-amber', '请求失败：' + err);
+        } finally {
+          $('stopBtn').style.display = 'none';
+          $('stopBtn').disabled = false; $('stopBtn').textContent = '⏹ 停止并转写';
+          $('recIndicator').style.display = 'none';
+          $('recordBtn').style.display = ''; $('recordBtn').disabled = false;
+          $('recHint').style.display = '';
+        }
+      });
       $('transcribeBtn').addEventListener('click', async () => {
         const f = $('audioFile').files[0];
         if (!f) { alert('请先选择本机音频 / 视频文件'); return; }
@@ -2712,7 +2795,7 @@ def comment_body() -> str:
           if (d.error) { setTransNotice('notice-amber', '转写失败：' + d.error); return; }
           $('rawText').value = d.text || '';
           $('videoUrl').value = '';
-          setTransNotice('notice-accent', '✅ 已转写 ' + (d.text ? d.text.length : 0) + ' 字口播文字（语言 ' + (d.language || 'auto') + '，' + (d.segments || 0) + ' 句），已填入文案框，点「分析并生成评论」即可。');
+          setTransNotice('notice-accent', '✅ 已转写 ' + (d.text ? d.text.length : 0) + ' 字口播文字（语言 ' + (d.language || 'auto') + '，' + (d.segments || 0) + ' 句）。请核对，有误可直接在上方修改，确认后点「分析文字内容」。');
         } catch (err) {
           setTransNotice('notice-amber', '请求失败：' + err);
         } finally {
@@ -2741,7 +2824,7 @@ def comment_body() -> str:
           if(!data.success){ alert(data.error || '生成失败'); return; }
           render(data);
         } catch(err){ alert('请求失败：'+err); }
-        finally { $('genBtn').textContent = '分析并生成评论'; $('genBtn').disabled = false; }
+        finally { $('genBtn').textContent = '分析文字内容'; $('genBtn').disabled = false; }
       });
       function render(data){
         const notice = $('modeNotice');
@@ -2796,6 +2879,10 @@ def comment_body() -> str:
       $('resetBtn').addEventListener('click', () => {
         $('videoUrl').value=''; $('rawText').value='';
         $('audioFile').value=''; $('audioName').textContent='未选择文件'; transNotice.style.display='none';
+        if (recTimer) { clearInterval(recTimer); recTimer = null; }
+        $('recordBtn').style.display=''; $('recordBtn').disabled=false;
+        $('stopBtn').style.display='none'; $('stopBtn').disabled=false; $('stopBtn').textContent='⏹ 停止并转写';
+        $('recIndicator').style.display='none'; $('recHint').style.display='';
         $('resultCard').style.display='none';
       });
       // 首屏探测 LLM 是否已接入
