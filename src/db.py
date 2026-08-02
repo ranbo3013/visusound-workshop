@@ -53,6 +53,7 @@ def init_db() -> None:
                 payload     TEXT DEFAULT '{}',
                 result      TEXT DEFAULT '{}',
                 error       TEXT DEFAULT '',
+                message     TEXT DEFAULT '',
                 created_at  TEXT,
                 updated_at  TEXT
             );
@@ -72,6 +73,12 @@ def init_db() -> None:
             """
         )
         conn.commit()
+        # 迁移：补齐历史库可能缺失的 message 列
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN message TEXT DEFAULT ''")
+            conn.commit()
+        except Exception:
+            pass
     finally:
         conn.close()
 
@@ -188,6 +195,7 @@ def update_task(
     progress: int | None = None,
     result: dict | None = None,
     error: str | None = None,
+    message: str | None = None,
 ) -> None:
     conn = get_conn()
     try:
@@ -200,6 +208,8 @@ def update_task(
             sets.append("result=?"); vals.append(json.dumps(result))
         if error is not None:
             sets.append("error=?"); vals.append(error)
+        if message is not None:
+            sets.append("message=?"); vals.append(message)
         sets.append("updated_at=?"); vals.append(_now())
         conn.execute(f"UPDATE tasks SET {','.join(sets)} WHERE id=?", (*vals, tid))
         conn.commit()

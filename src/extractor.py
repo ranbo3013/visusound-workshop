@@ -258,8 +258,11 @@ def extract_all_embedded(
         if output_dir:
             base = Path(video_path).stem
             stream = probe.subtitle_streams[i]
-            lang = stream.language or str(i)
-            out_path = str(Path(output_dir) / f"{base}.{lang}")
+            lang = stream.language or ""
+            # 语言常为 "und"（未定义），不能直接当扩展名，否则 ffmpeg 无法选封装格式
+            name = base if lang in ("", "und") else f"{base}.{lang}"
+            ext = (output_format or "srt").lower().lstrip(".")
+            out_path = str(Path(output_dir) / f"{name}.{ext}")
         r = extract_embedded(video_path, i, out_path, output_format, timeout)
         results.append(r)
     return results

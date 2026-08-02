@@ -7,10 +7,12 @@ Run with:  uvicorn app:app --reload --port 8080
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +34,8 @@ from src.source import classify_source, guess_output_filename
 from src.formatter import parse_srt_to_text, merge_bilingual, format_to_string
 from src import db
 from src import tts
+from src import llm
+from src import pipeline
 
 # ---------------------------------------------------------------------------
 # 加载 .env（零依赖实现，避免引入 python-dotenv）
@@ -66,6 +70,11 @@ app = FastAPI(title="VisuSound Workshop")
 
 UPLOAD_DIR = PROJECT_ROOT / "static" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+DOWNLOAD_DIR = PROJECT_ROOT / "static" / "downloads"
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# 本地化流水线任务的实时进度（内存态；历史落库 tasks 表）
+PIPELINE_JOBS: dict[str, dict] = {}
 
 # ---------------------------------------------------------------------------
 # API: Extract subtitles
@@ -323,10 +332,19 @@ async def api_extract(
 async def api_download(filename: str):
     file_path = UPLOAD_DIR / filename
     if not file_path.exists():
+        file_path = DOWNLOAD_DIR / filename
+    if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
+    # 视频导出用正确 MIME，便于浏览器预览/下载
+    if filename.lower().endswith((".mp4", ".mkv", ".webm", ".mov")):
+        media = "video/mp4"
+    elif filename.lower().endswith((".wav", ".mp3", ".m4a")):
+        media = "audio/mpeg" if filename.lower().endswith(".mp3") else "audio/wav"
+    else:
+        media = "text/plain"
     return FileResponse(
         str(file_path),
-        media_type="text/plain",
+        media_type=media,
         filename=filename,
     )
 
@@ -940,46 +958,15 @@ _TONE_TEMPLATES = {
 #   OPENAI_API_KEY                → OpenAI
 #   LLM_MODEL     可选，覆盖各厂商默认模型名
 #   LLM_BASE_URL  可选，自定义兼容端点
+# 配置探测与翻译逻辑已集中到 src/llm.py（视频评论与本地化流水线共用）。
 # ---------------------------------------------------------------------------
 
 import httpx
 
-_LLM_PROVIDERS = {
-    "doubao":   {"env": ["ARK_API_KEY", "DOUBAO_API_KEY"],
-                 "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-                 "model": "doubao-seed-1.6-250615"},
-    "deepseek": {"env": ["DEEPSEEK_API_KEY"],
-                 "base_url": "https://api.deepseek.com/v1",
-                 "model": "deepseek-chat"},
-    "qwen":     {"env": ["QWEN_API_KEY", "DASHSCOPE_API_KEY"],
-                 "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                 "model": "qwen-plus"},
-    "openai":   {"env": ["OPENAI_API_KEY"],
-                 "base_url": "https://api.openai.com/v1",
-                 "model": "gpt-4o-mini"},
-}
-
-
-def _get_llm_config() -> dict | None:
-    """探测 .env 中的 LLM key，返回配置 dict 或 None（表示走 Mock）。"""
-    pref = os.environ.get("LLM_PROVIDER", "auto").strip().lower()
-    order = [pref] if pref in _LLM_PROVIDERS else list(_LLM_PROVIDERS.keys())
-    for name in order:
-        spec = _LLM_PROVIDERS.get(name)
-        if not spec:
-            continue
-        for envk in spec["env"]:
-            key = os.environ.get(envk, "").strip()
-            if key:
-                base = os.environ.get("LLM_BASE_URL", "").strip() or spec["base_url"]
-                model = os.environ.get("LLM_MODEL", "").strip() or spec["model"]
-                return {"provider": name, "base_url": base, "api_key": key, "model": model}
-    return None
-
 
 async def _generate_comments_with_llm(analysis_text: str, max_words: int, tone: str, count: int) -> list[dict] | None:
     """调用真实 LLM 生成评论。返回评论列表，失败返回 None（调用方降级 Mock）。"""
-    cfg = _get_llm_config()
+    cfg = llm.get_llm_config()
     if not cfg:
         return None
     text = analysis_text.strip()[:1500] or "这个视频"
@@ -1072,7 +1059,7 @@ async def api_comment_generate(
     count = max(1, min(6, int(count)))
 
     # 优先调用真实 LLM；无 key 或调用失败则降级 Mock 模板
-    cfg = _get_llm_config()
+    cfg = llm.get_llm_config()
     llm_comments = await _generate_comments_with_llm(analysis_text, max_words, tone, count) if cfg else None
     if llm_comments:
         comments = llm_comments
@@ -1109,7 +1096,7 @@ async def api_comment_generate(
 @app.get("/api/comment/status")
 async def api_comment_status():
     """前端首屏探测：是否已接入真实 LLM。"""
-    cfg = _get_llm_config()
+    cfg = llm.get_llm_config()
     return {"configured": bool(cfg), "provider": cfg["provider"] if cfg else None}
 
 
@@ -1223,6 +1210,75 @@ async def api_tts_clone(req: Request):
         return JSONResponse({"error": "name required"}, status_code=400)
     res = tts.clone_mock_voice(name, data.get("source", ""), data.get("segment", ""))
     return {"success": True, "mode": "mock", **res}
+
+
+# ---------------------------------------------------------------------------
+# API: 视频本地化流水线（提取 → 翻译 → 配音 → 替换音轨 → 导出）
+# ---------------------------------------------------------------------------
+
+@app.post("/api/pipeline/run")
+async def api_pipeline_run(
+    video_url: str = Form(""),
+    file: UploadFile | None = None,
+    target_lang: str = Form("英语"),
+    voice_id: str = Form("warm_f"),
+):
+    """启动一次本地化流水线。立即返回 job_id，前端轮询状态。"""
+    local_path = None
+    if file and file.filename:
+        upload_path = UPLOAD_DIR / file.filename
+        with open(upload_path, "wb") as f:
+            f.write(await file.read())
+        local_path = str(upload_path)
+    elif not video_url.strip():
+        return JSONResponse({"error": "请提供视频链接或上传文件"}, status_code=400)
+
+    job_id = uuid.uuid4().hex[:12]
+    PIPELINE_JOBS[job_id] = {
+        "step": -1, "total": 5, "msg": "已创建任务，等待执行…",
+        "status": "queued", "result": None, "done": False,
+    }
+    task_id = db.create_task("pipeline", {
+        "target_lang": target_lang, "voice_id": voice_id,
+        "source": video_url or (file.filename if file else ""),
+    })
+
+    def _report(step_idx, total, msg, status):
+        PIPELINE_JOBS[job_id].update({
+            "step": step_idx, "total": total, "msg": msg, "status": status,
+        })
+        pct = int((step_idx + 1) / total * 100)
+        db.update_task(task_id, status=("running" if status == "running" else status),
+                       progress=pct, message=msg)
+
+    async def _worker():
+        try:
+            result = await asyncio.to_thread(
+                pipeline.run_localization, job_id,
+                video_url=video_url, local_path=local_path,
+                target_lang=target_lang, voice_id=voice_id, report=_report,
+            )
+            PIPELINE_JOBS[job_id]["result"] = result
+            PIPELINE_JOBS[job_id]["done"] = True
+            PIPELINE_JOBS[job_id]["status"] = "success" if result.get("success") else "failed"
+            db.update_task(task_id, status=PIPELINE_JOBS[job_id]["status"],
+                           result=result, message=result.get("error") or "完成")
+        except Exception as e:
+            PIPELINE_JOBS[job_id]["status"] = "failed"
+            PIPELINE_JOBS[job_id]["done"] = True
+            PIPELINE_JOBS[job_id]["msg"] = f"异常：{e}"
+
+    asyncio.create_task(_worker())
+    return {"success": True, "job_id": job_id}
+
+
+@app.get("/api/pipeline/status/{job_id}")
+async def api_pipeline_status(job_id: str):
+    """轮询流水线进度。"""
+    job = PIPELINE_JOBS.get(job_id)
+    if not job:
+        return JSONResponse({"error": "job not found"}, status_code=404)
+    return job
 
 
 # ---------------------------------------------------------------------------
@@ -1352,7 +1408,7 @@ def dashboard_body() -> str:
       <div class="card stat-card" style="border-color:rgba(0,212,170,.35);background:linear-gradient(135deg,rgba(0,212,170,.08),transparent)">
         <div class="stat-top"><span class="stat-label">视频本地化流水线</span></div>
         <div class="stat-sub" style="margin-top:8px">一键提取字幕 → 翻译 → AI 配音 → 替换音轨</div>
-        <button class="btn btn-primary mt-12">启动流水线</button>
+        <button class="btn btn-primary mt-12" onclick="document.getElementById('pipelineConsole').scrollIntoView({behavior:'smooth'})">启动流水线</button>
       </div>
     </div>
 
@@ -1361,16 +1417,59 @@ def dashboard_body() -> str:
         <span class="section-title">视频本地化流水线</span>
         <span class="section-sub">从字幕提取到配音替换，一键完成</span>
       </div>
-      <div class="pipeline">
-        <div class="pipeline-step done"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/></svg></div><span class="pipeline-label">提取字幕</span></div>
-        <div class="pipeline-arrow"></div>
-        <div class="pipeline-step active"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div><span class="pipeline-label">翻译 / 改写</span></div>
-        <div class="pipeline-arrow"></div>
-        <div class="pipeline-step"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></div><span class="pipeline-label">AI 配音</span></div>
-        <div class="pipeline-arrow"></div>
-        <div class="pipeline-step"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/></svg></div><span class="pipeline-label">替换音轨</span></div>
-        <div class="pipeline-arrow"></div>
-        <div class="pipeline-step"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div><span class="pipeline-label">导出完成</span></div>
+      <div class="grid grid-2" style="gap:18px;align-items:start">
+        <div>
+          <label class="field-label">视频来源</label>
+          <input class="input" id="plUrl" placeholder="粘贴视频链接（抖音 / B站 / YouTube …）" />
+          <div class="muted" style="font-size:12px;margin:6px 0 10px">或上传本地视频文件</div>
+          <div class="upload-zone" id="plDrop" style="padding:18px">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <div>拖拽视频到此处，或 <span style="color:var(--accent)">点击选择</span></div>
+            <div class="muted" style="font-size:12px;margin-top:6px" id="plName"></div>
+            <input type="file" id="plFile" accept="video/*" hidden />
+          </div>
+          <div class="row" style="gap:12px;margin-top:14px">
+            <div style="flex:1"><label class="field-label">目标语言</label>
+              <select class="select" id="plLang">
+                <option>英语</option><option>日语</option><option>韩语</option>
+                <option>法语</option><option>德语</option><option>西班牙语</option><option>俄语</option>
+              </select>
+            </div>
+            <div style="flex:1"><label class="field-label">配音音色</label>
+              <select class="select" id="plVoice"></select>
+            </div>
+          </div>
+          <div class="notice notice-amber" style="margin-top:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>当前配音为 Mock 引擎（占位音频）；接入真实 TTS 后输出真实人声。翻译在有 LLM key 时调用真实模型，否则走占位。</span></div>
+          <button class="btn btn-primary mt-16" id="plRun" style="width:100%">启动本地化流水线</button>
+        </div>
+        <div>
+          <div class="section-head"><span class="section-title">执行进度</span><span class="tag" id="plStatus">待启动</span></div>
+          <div class="pipeline" id="plSteps" style="margin:14px 0">
+            <div class="pipeline-step" data-i="0"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/></svg></div><span class="pipeline-label">提取字幕</span></div>
+            <div class="pipeline-arrow"></div>
+            <div class="pipeline-step" data-i="1"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div><span class="pipeline-label">翻译 / 改写</span></div>
+            <div class="pipeline-arrow"></div>
+            <div class="pipeline-step" data-i="2"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg></div><span class="pipeline-label">AI 配音</span></div>
+            <div class="pipeline-arrow"></div>
+            <div class="pipeline-step" data-i="3"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/></svg></div><span class="pipeline-label">替换音轨</span></div>
+            <div class="pipeline-arrow"></div>
+            <div class="pipeline-step" data-i="4"><div class="pipeline-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div><span class="pipeline-label">导出完成</span></div>
+          </div>
+          <div class="progress" style="margin:6px 0 4px"><div class="progress-bar" id="plBar" style="width:0%"></div></div>
+          <div class="muted font-mono" id="plLog" style="font-size:12px;min-height:20px;margin-top:8px">—</div>
+        </div>
+      </div>
+
+      <div class="card mt-24" id="plResult" style="display:none">
+        <div class="section-head"><span class="section-title">本地化结果</span><span class="muted" id="plResultMeta"></span></div>
+        <div class="grid grid-2" style="align-items:start">
+          <video id="plVideo" controls style="width:100%;border-radius:var(--r-md);background:#000"></video>
+          <div>
+            <a class="btn btn-primary" id="plDownload" target="_blank">下载本地化视频</a>
+            <div class="section-head mt-24"><span class="section-title">字幕对照</span></div>
+            <div style="max-height:320px;overflow:auto" id="plSubs"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1416,6 +1515,81 @@ def dashboard_body() -> str:
         <div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer;border-style:dashed"><div style="font-size:28px">+</div><div style="font-size:13px;margin-top:6px">创建新项目</div></div>
       </div>
     </div>
+
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      // 加载音色到下拉
+      (async()=>{const vs=await (await fetch('/api/tts/voices')).json();const sel=$('plVoice');sel.innerHTML='';vs.forEach(v=>{const o=document.createElement('option');o.value=v.id;o.textContent=v.name;sel.appendChild(o);});if(vs.length)$('plVoice').value=vs[0].id;})();
+
+      $('plDrop').addEventListener('click',()=>$('plFile').click());
+      $('plFile').addEventListener('change',e=>{const f=e.target.files[0];$('plName').textContent=f?('已选择：'+f.name):'';});
+
+      let timer=null, curJob=null;
+      function setSteps(activeIdx, doneUpto){
+        document.querySelectorAll('#plSteps .pipeline-step').forEach(el=>{
+          const i=parseInt(el.dataset.i);
+          el.classList.remove('active','done');
+          if(doneUpto!==undefined && i<doneUpto) el.classList.add('done');
+          if(i===activeIdx) el.classList.add('active');
+        });
+      }
+      function poll(){
+        if(!curJob) return;
+        fetch('/api/pipeline/status/'+curJob).then(r=>r.json()).then(d=>{
+          if(d.error){return;}
+          $('plStatus').textContent = d.status==='running'?'进行中':(d.status==='success'?'完成':(d.status==='failed'?'失败':d.status));
+          $('plStatus').className = 'tag'+(d.status==='success'?' tag-accent':(d.status==='failed'?' tag-red':' tag-purple'));
+          $('plLog').textContent = d.msg||'';
+          const pct = d.total ? Math.round(((d.step+1)/d.total)*100) : 0;
+          $('plBar').style.width = (d.status==='success'?100:(d.status==='failed'?(d.step+1)/d.total*100:pct))+'%';
+          if(d.step>=0) setSteps(d.status==='success'?-1:d.step, d.status==='success'?5:undefined);
+          if(d.done){
+            clearInterval(timer);
+            if(d.status==='success' && d.result){
+              const r=d.result;
+              $('plResult').style.display='';
+              $('plVideo').src='/api/download/'+encodeURIComponent(r.download);
+              $('plDownload').href='/api/download/'+encodeURIComponent(r.download);
+              $('plResultMeta').textContent=r.target_lang+' · '+r.blocks.length+' 条 · 配音模式 '+r.mode;
+              const box=$('plSubs');box.innerHTML='';
+              r.blocks.slice(0,40).forEach(b=>{
+                const row=document.createElement('div');row.style.cssText='padding:8px 0;border-bottom:1px solid var(--border-light)';
+                row.innerHTML='<div class="muted font-mono" style="font-size:11px">'+fmt(b.start)+' – '+fmt(b.end)+'</div>'
+                  +'<div style="font-size:13px">'+escapeHtml(b.dst)+'</div>'
+                  +'<div class="muted" style="font-size:12px">'+escapeHtml(b.src)+'</div>';
+                box.appendChild(row);
+              });
+            } else if(d.status==='failed'){
+              $('plLog').textContent='失败：'+(d.result&&d.result.error||d.msg);
+            }
+          }
+        }).catch(()=>{});
+      }
+      function fmt(s){s=Math.round(s);const m=Math.floor(s/60),x=s%60;return m+':'+(x<10?'0':'')+x;}
+      function escapeHtml(s){return String(s||'').replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+
+      $('plRun').addEventListener('click',async()=>{
+        const url=$('plUrl').value.trim();
+        const file=$('plFile').files[0];
+        if(!url && !file){alert('请粘贴视频链接或上传文件');return;}
+        $('plRun').disabled=true;$('plRun').textContent='流水线运行中…';
+        $('plResult').style.display='none';setSteps(-1);$('plBar').style.width='0%';
+        try{
+          const fd=new FormData();
+          if(url) fd.append('video_url',url);
+          if(file) fd.append('file',file);
+          fd.append('target_lang',$('plLang').value);
+          fd.append('voice_id',$('plVoice').value);
+          const r=await fetch('/api/pipeline/run',{method:'POST',body:fd});
+          const d=await r.json();
+          if(d.error){alert(d.error);return;}
+          curJob=d.job_id;timer=setInterval(poll,1500);poll();
+        }catch(e){alert('启动失败：'+e);}
+        finally{$('plRun').disabled=false;$('plRun').textContent='启动本地化流水线';}
+      });
+    })();
+    </script>
     '''
 
 
