@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>声画工坊 — 本地优先的媒资处理工作台</title>
+<meta name="description" content="声画工坊（VisuSound Workshop）是一套本地优先的全功能媒资处理工作台：字幕提取、语音转写、图片 OCR、AI 配音、声音克隆与视频本地化流水线，一站完成。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg-2: #0f0f1a;
+    --surface: #14142a;
+    --surface-2: #1a1a34;
+    --border: #2a2a4a;
+    --border-light: #3a3a5a;
+    --text: #e8e8f0;
+    --muted: #8888a8;
+    --accent: #00d4aa;
+    --accent-hover: #00e8bb;
+    --purple: #7c5cfc;
+    --amber: #f59e0b;
+    --radius: 16px;
+    --maxw: 1180px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  ::placeholder { font-family: inherit; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  a { color: inherit; text-decoration: none; }
+  .container { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+  .eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .04em; color: var(--accent); margin-bottom: 14px; }
+  .section-title { font-size: clamp(26px, 4vw, 38px); font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
+  .section-sub { margin-top: 14px; color: var(--muted); font-size: 16px; max-width: 640px; }
+  .accent { color: var(--accent); }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all .18s ease; border: 1px solid transparent; white-space: nowrap; }
+  .btn-primary { background: var(--accent); color: #0a0a0f; }
+  .btn-primary:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--border-light); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
+  *:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+  /* Header */
+  header.site { position: sticky; top: 0; z-index: 50; background: rgba(10,10,15,.8); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+  .nav { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .brand .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--purple)); display: grid; place-items: center; color: #fff; font-weight: 800; }
+  .nav-links { display: flex; gap: 26px; margin-left: 12px; }
+  .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; transition: color .15s; }
+  .nav-links a:hover { color: var(--text); }
+  .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .github-link { color: var(--muted); font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .github-link:hover { color: var(--text); }
+
+  /* Hero */
+  .hero { padding: 96px 0 72px; text-align: center; background: radial-gradient(ellipse at top, rgba(0,212,170,.08), transparent 60%); }
+  .badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--muted); margin-bottom: 26px; }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .hero h1 { font-size: clamp(38px, 6.4vw, 66px); font-weight: 800; line-height: 1.08; letter-spacing: -.03em; max-width: 900px; margin: 0 auto; }
+  .hero p.lead { margin: 24px auto 0; max-width: 660px; color: var(--muted); font-size: 18px; }
+  .hero-cta { margin-top: 34px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+
+  /* Mockup */
+  .mockup { margin: 56px auto 0; max-width: 1000px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; box-shadow: 0 30px 80px -30px rgba(0,0,0,.6); }
+  .mockup-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+  .mockup-bar .dots { display: flex; gap: 6px; } .mockup-bar .dots span { width: 11px; height: 11px; border-radius: 50%; background: var(--border-light); }
+  .mockup-bar .addr { margin-left: 12px; flex: 1; font-size: 12px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 5px 12px; }
+  .mockup-body { display: grid; grid-template-columns: 1fr 1.1fr; gap: 1px; background: var(--border); min-height: 360px; }
+  .mockup-left { background: var(--surface); padding: 22px; text-align: left; }
+  .mockup-left .field { background: var(--bg-2); border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .mockup-left .field.url { color: var(--text); }
+  .mockup-left .pill { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); margin: 4px 6px 4px 0; }
+  .mockup-left .run { margin-top: 6px; background: var(--accent); color: #0a0a0f; font-size: 13px; font-weight: 600; border-radius: 10px; padding: 10px; text-align: center; }
+  .mockup-right { background: var(--surface); padding: 22px; text-align: left; }
+  .mockup-right .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--accent); background: rgba(0,212,170,.1); border: 1px solid rgba(0,212,170,.25); padding: 3px 10px; border-radius: 999px; }
+  .mockup-right pre { margin-top: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: #b8c0d8; line-height: 1.9; white-space: pre-wrap; }
+
+  /* Sections */
+  section.block { padding: 84px 0; border-top: 1px solid var(--border); }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 44px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 44px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; transition: border-color .2s, transform .2s; }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card .ic { width: 42px; height: 42px; border-radius: 10px; background: rgba(0,212,170,.1); display: grid; place-items: center; margin-bottom: 18px; color: var(--accent); }
+  .card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  .card p { color: var(--muted); font-size: 14.5px; }
+
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 44px; }
+  .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px 22px; }
+  .step .num { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--accent); color: var(--accent); font-family: 'JetBrains Mono', monospace; font-weight: 600; display: grid; place-items: center; margin-bottom: 16px; }
+  .step h4 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .step p { color: var(--muted); font-size: 14px; }
+
+  .cap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 44px; }
+  .cap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; transition: border-color .2s, transform .2s; }
+  .cap:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .cap .k { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--accent); margin-bottom: 10px; }
+  .cap h4 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .cap p { color: var(--muted); font-size: 13.5px; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 44px; }
+  .stat { text-align: center; padding: 28px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  .stat .v { font-family: 'JetBrains Mono', monospace; font-size: 38px; font-weight: 600; color: var(--text); }
+  .stat .v span { color: var(--accent); }
+  .stat .l { color: var(--muted); font-size: 14px; margin-top: 6px; }
+
+  .quote { margin-top: 22px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 34px 38px; }
+  .quote p { font-size: 19px; line-height: 1.7; }
+  .quote .by { margin-top: 16px; color: var(--muted); font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  .quote .by .av { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--purple)); }
+
+  .faq { max-width: 820px; margin: 44px auto 0; }
+  .faq-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; background: var(--surface); margin-bottom: 14px; }
+  .faq-item h4 { font-size: 16.5px; font-weight: 700; }
+  .faq-item p { color: var(--muted); font-size: 14.5px; margin-top: 8px; }
+  .notice { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 10px; font-size: 13px; margin-top: 10px; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.2); color: var(--amber); }
+
+  .final { text-align: center; padding: 72px 24px; background: linear-gradient(135deg, rgba(0,212,170,.1), rgba(124,92,252,.08)); border: 1px solid var(--border); border-radius: 18px; margin: 0 0 84px; }
+  .final h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 800; letter-spacing: -.02em; }
+  .final p { color: var(--muted); margin-top: 12px; font-size: 16px; }
+  .final .hero-cta { margin-top: 28px; }
+
+  footer.site { border-top: 1px solid var(--border); padding: 56px 0 32px; background: var(--bg-2); }
+  .foot-grid { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 32px; }
+  .foot-brand p { color: var(--muted); font-size: 14px; margin-top: 12px; max-width: 260px; }
+  .foot-col h5 { font-size: 13px; font-weight: 700; margin-bottom: 14px; letter-spacing: .03em; }
+  .foot-col a { display: block; color: var(--muted); font-size: 14px; margin-bottom: 10px; transition: color .15s; }
+  .foot-col a:hover { color: var(--accent); }
+  .foot-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 44px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 900px) {
+    .nav-links { display: none; }
+    .mockup-body { grid-template-columns: 1fr; }
+    .grid-3, .cap-grid, .steps { grid-template-columns: 1fr 1fr; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .foot-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 560px) {
+    .grid-3, .cap-grid, .steps, .grid-2, .stats, .foot-grid { grid-template-columns: 1fr; }
+    .hero { padding: 60px 0 48px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== Header ===== -->
+<header class="site">
+  <div class="container nav">
+    <a class="brand" href="/">
+      <span class="logo">声</span>
+      声画工坊
+    </a>
+    <nav class="nav-links">
+      <a href="#features">功能</a>
+      <a href="#how">工作原理</a>
+      <a href="#caps">能力矩阵</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <div class="nav-actions">
+      <a class="github-link" href="https://github.com/ranbo3013/visusound-workshop" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.1 1.7 1.1 1 1.7 2.7 1.2 3.4.9.1-.7.4-1.2.7-1.5-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 016 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-primary" href="/app">进入工作台</a>
+    </div>
+  </div>
+</header>
+
+<!-- ===== Hero ===== -->
+<section class="hero">
+  <div class="container">
+    <span class="badge"><span class="dot"></span> 开源 · 本地优先 · 全功能媒资处理</span>
+    <h1>音视频内容，<span class="accent">一站式生产</span></h1>
+    <p class="lead">声画工坊（VisuSound Workshop）把字幕提取、语音转写、图片 OCR、AI 配音与声音克隆收进同一个工作台，配合视频本地化流水线，让视频二创与出海效率翻倍。</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="/app">进入工作台</a>
+      <a class="btn btn-ghost" href="https://github.com/ranbo3013/visusound-workshop" target="_blank" rel="noopener">查看 GitHub</a>
+    </div>
+
+    <!-- Product mockup -->
+    <div class="mockup">
+      <div class="mockup-bar">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <div class="addr mono">app.shenghua.dev</div>
+      </div>
+      <div class="mockup-body">
+        <div class="mockup-left">
+          <div class="field url mono">https://www.bilibili.com/video/BV1xx…</div>
+          <div class="field">选择声音：晓晓（中文女声 · 温柔）</div>
+          <div>
+            <span class="pill">字幕提取</span><span class="pill">AI 配音</span><span class="pill">声音克隆</span>
+          </div>
+          <div class="run">启动本地化流水线</div>
+        </div>
+        <div class="mockup-right">
+          <span class="tag">● 流水线完成 · 已替换音轨</span>
+          <pre>1
+00:00:02,140 --> 00:00:05,880
+大家好，欢迎回到我的频道。
+
+2
+00:00:06,020 --> 00:00:09,400
+今天我们用 AI 把这条视频本地化。
+
+3
+00:00:09,560 --> 00:00:13,210
+只需一个链接，字幕与配音一起搞定。</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Core Features ===== -->
+<section class="block" id="features">
+  <div class="container">
+    <span class="eyebrow">核心能力</span>
+    <h2 class="section-title">一套工具，覆盖音视频文本全流程</h2>
+    <p class="section-sub">从提取、转写、识别到合成、克隆，本地优先，数据不出本机。</p>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg></div>
+        <h3>字幕提取</h3>
+        <p>自动探测内嵌 / 外挂字幕，内建权限预检；支持 B站 / YouTube 等 9 大平台与弹幕兜底。</p>
+      </div>
+      <div class="card">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg></div>
+        <h3>AI 语音转写</h3>
+        <p>基于 Whisper 将语音转为带时间戳文本，自动简繁转换，支持多语言。</p>
+      </div>
+      <div class="card">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="16" width="16" height="5" rx="2"/><path d="M12 3v9M8 12l4 4 4-4"/></svg></div>
+        <h3>AI 配音</h3>
+        <p>文字一键转语音，多情绪、多参数（语速 / 音调 / 音量）控制，支持批量与多人角色。</p>
+      </div>
+      <div class="card">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></div>
+        <h3>声音克隆</h3>
+        <p>上传 10–30 秒人声即可克隆音色，并内置授权合规提醒，安全可控。</p>
+      </div>
+      <div class="card">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg></div>
+        <h3>图片 OCR</h3>
+        <p>从截图、海报、封面中提取文字，支持中文与英文识别，一键导出纯文本。</p>
+      </div>
+      <div class="card">
+        <div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg></div>
+        <h3>系统录音</h3>
+        <p>通过 BlackHole 捕获系统音频，自动转写，适合会议、直播与课程素材采集。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== How It Works ===== -->
+<section class="block" id="how">
+  <div class="container">
+    <span class="eyebrow">工作原理</span>
+    <h2 class="section-title">四步，从视频到成片</h2>
+    <p class="section-sub">视频本地化流水线把提取、翻译、配音、替换音轨串成一条龙。</p>
+
+    <div class="steps">
+      <div class="step"><div class="num">1</div><h4>输入源</h4><p>本地文件、直链视频，或 B站 / YouTube 等平台链接。</p></div>
+      <div class="step"><div class="num">2</div><h4>提取 / 转写</h4><p>提取字幕轨道，无字幕时回退 Whisper 语音转写。</p></div>
+      <div class="step"><div class="num">3</div><h4>翻译 / AI 配音</h4><p>字幕翻译改写后，用 AI 或克隆声音生成自然配音。</p></div>
+      <div class="step"><div class="num">4</div><h4>替换音轨导出</h4><p>合成新视频或替换原声轨，输出成品。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Capability Grid ===== -->
+<section class="block" id="caps">
+  <div class="container">
+    <span class="eyebrow">能力矩阵</span>
+    <h2 class="section-title">为什么选声画工坊</h2>
+    <p class="section-sub">为真实生产场景设计：隐私、兼容性、音色与兜底能力都考虑在内。</p>
+
+    <div class="cap-grid">
+      <div class="cap"><div class="k">FORMAT</div><h4>多格式导出</h4><p>SRT / VTT / ASS / TXT 与 WAV / MP3 自由切换。</p></div>
+      <div class="cap"><div class="k">PRIVACY</div><h4>本地优先隐私</h4><p>文件默认在本地处理，不上传第三方，敏感内容更安心。</p></div>
+      <div class="cap"><div class="k">PLATFORM</div><h4>全平台支持</h4><p>本地 / 直链 / B站 / YouTube / Vimeo 以及 HLS、DASH。</p></div>
+      <div class="cap"><div class="k">FALLBACK</div><h4>弹幕兜底</h4><p>无字幕轨道时，自动回退解析弹幕 XML 拿到文本。</p></div>
+      <div class="cap"><div class="k">EMOTION</div><h4>情绪与参数</h4><p>中性 / 快乐 / 悲伤 / 愤怒 + 强度，语速音调音量可调。</p></div>
+      <div class="cap"><div class="k">CLONE</div><h4>声音克隆</h4><p>短样本克隆音色，合规授权提醒内置，安全可控。</p></div>
+      <div class="cap"><div class="k">BATCH</div><h4>批量与多人</h4><p>批量任务队列 + 多人角色分派，长稿高效产出。</p></div>
+      <div class="cap"><div class="k">PIPELINE</div><h4>本地化流水线</h4><p>提取→翻译→配音→替换音轨一键编排，出海二创利器。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Social Proof ===== -->
+<section class="block">
+  <div class="container">
+    <div class="stats">
+      <div class="stat"><div class="v">9<span>+</span></div><div class="l">支持平台</div></div>
+      <div class="stat"><div class="v">6</div><div class="l">核心能力</div></div>
+      <div class="stat"><div class="v">100<span>%</span></div><div class="l">本地优先</div></div>
+      <div class="stat"><div class="v">MIT</div><div class="l">开源许可</div></div>
+    </div>
+    <div class="quote">
+      <p>“以前做视频本地化要来回切四五个工具，现在一个工作台从字幕到配音全跑完，出片效率直接翻倍。”</p>
+      <div class="by"><span class="av"></span> 某知识区 UP 主</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== FAQ ===== -->
+<section class="block" id="faq">
+  <div class="container">
+    <span class="eyebrow">常见问题</span>
+    <h2 class="section-title">你可能想问</h2>
+    <div class="faq">
+      <div class="faq-item"><h4>支持哪些平台？</h4><p>本地文件、直链视频、B站 / YouTube / Vimeo 等（需 yt-dlp），以及 HLS / DASH 流媒体。</p></div>
+      <div class="faq-item"><h4>我的视频会被上传吗？</h4><p>默认全部在本地处理；仅当你提供远程 URL 时，代码会将其下载到本地临时目录，不会上传任何第三方。</p></div>
+      <div class="faq-item"><h4>声音克隆合规吗？</h4><p>克隆他人声音需获得明确授权。产品内置授权提醒，且依据国内《互联网信息服务深度合成管理规定》对合成内容做标识，请勿用于冒用或造假。</p></div>
+      <div class="faq-item"><h4>受 DRM 保护的视频能提取吗？</h4><p>不能。DRM 加密内容受保护，工具会在权限预检阶段直接识别并提示，避免无效下载。</p></div>
+      <div class="faq-item"><h4>收费吗？</h4><p>完全开源，基于 MIT 许可，可自由使用与二次开发。AI 配音如需接入云 API 按对应厂商计费。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Final CTA ===== -->
+<section class="block" style="border-top:none; padding-top:0;">
+  <div class="container">
+    <div class="final">
+      <h2>现在就开始你的第一条音视频生产</h2>
+      <p>贴一个链接，几十秒拿到字幕与配音。</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="/app">进入工作台</a>
+          <a class="btn btn-ghost" href="https://github.com/ranbo3013/visusound-workshop" target="_blank" rel="noopener">GitHub Star</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Footer ===== -->
+<footer class="site">
+  <div class="container">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="brand" href="/"><span class="logo">声</span>声画工坊</a>
+        <p>音视频内容生产 · 字幕提取 · AI 配音 · 声音克隆</p>
+      </div>
+      <div class="foot-col">
+        <h5>产品</h5>
+        <a href="/app">进入工作台</a>
+        <a href="#features">字幕提取</a>
+        <a href="#features">AI 配音</a>
+        <a href="#features">声音克隆</a>
+      </div>
+      <div class="foot-col">
+        <h5>资源</h5>
+          <a href="https://github.com/ranbo3013/visusound-workshop" target="_blank" rel="noopener">GitHub</a>
+        <a href="#how">快速开始</a>
+        <a href="#caps">功能文档</a>
+      </div>
+      <div class="foot-col">
+        <h5>关于</h5>
+        <a href="#">开源许可 (MIT)</a>
+        <a href="#">贡献指南</a>
+        <a href="#">问题反馈</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 声画工坊 (VisuSound Workshop) · 基于 MIT 开源许可</span>
+      <a class="github-link" href="https://github.com/ranbo3013/visusound-workshop" target="_blank" rel="noopener">GitHub ↗</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

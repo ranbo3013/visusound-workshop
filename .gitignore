@@ -1,0 +1,23 @@
+# 密钥与本地配置（切勿提交）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# 运行时产出（下载的视频 / 提取的字幕 / 录音）
+static/uploads/
+static/downloads/
+
+# 本地助手记忆（非项目源码，勿提交）
+.workbuddy/
+
+# macOS 元数据
+.DS_Store

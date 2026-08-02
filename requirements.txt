@@ -1,0 +1,21 @@
+# Core dependencies
+httpx>=0.27,<1.0
+
+# Web UI (FastAPI)
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+python-multipart>=0.0.20,<1.0
+
+# OCR (optional)
+pytesseract>=0.3,<1.0
+Pillow>=11.0,<12.0
+
+# yt-dlp is optional (needed for YouTube/Bilibili/etc. support)
+# Install: pip install yt-dlp  or  brew install yt-dlp
+# yt-dlp>=2024.0
+
+# System dependencies (NOT pip-installable):
+#   FFmpeg (ffmpeg + ffprobe) — https://ffmpeg.org/
+#     brew install ffmpeg  /  apt install ffmpeg  /  choco install ffmpeg
+#   Tesseract OCR (for image text recognition)
+#     brew install tesseract tesseract-lang  /  apt install tesseract-ocr
