@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +30,7 @@ from src.gateway import check_access
 from src.models import SourceType, SubtitleFormat
 from src.source import classify_source, guess_output_filename
 from src.formatter import parse_srt_to_text, merge_bilingual, format_to_string
+from src import db
 
 # ---------------------------------------------------------------------------
 # 加载 .env（零依赖实现，避免引入 python-dotenv）
@@ -55,7 +56,10 @@ def _load_dotenv(path: Path | None = None) -> None:
 
 _load_dotenv()
 
-app = FastAPI(title="Video Subtitle Extractor")
+# 初始化本地 SQLite 数据层（projects / tasks / settings / voices）
+db.init_db()
+
+app = FastAPI(title="VisuSound Workshop")
 
 UPLOAD_DIR = PROJECT_ROOT / "static" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1107,6 +1111,49 @@ async def api_comment_status():
 
 
 # ---------------------------------------------------------------------------
+# API: 项目管理 / 设置 / 任务队列（SQLite 持久化）
+# ---------------------------------------------------------------------------
+
+@app.get("/api/projects")
+async def api_projects():
+    return db.list_projects()
+
+
+@app.post("/api/projects")
+async def api_create_project(req: Request):
+    data = await req.json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    pid = db.create_project(name, data.get("description", ""))
+    return {"success": True, "id": pid}
+
+
+@app.delete("/api/projects/{pid}")
+async def api_delete_project(pid: int):
+    db.delete_project(pid)
+    return {"success": True}
+
+
+@app.get("/api/settings")
+async def api_get_settings():
+    return db.get_all_settings()
+
+
+@app.post("/api/settings")
+async def api_post_settings(req: Request):
+    data = await req.json()
+    for k, v in data.items():
+        db.set_setting(k, v)
+    return {"success": True}
+
+
+@app.get("/api/tasks")
+async def api_tasks(limit: int = 50):
+    return db.list_tasks(limit)
+
+
+# ---------------------------------------------------------------------------
 # Web UI — 声画工坊 媒资工作台外壳（220px 宽栏 + 顶栏 + 状态栏）
 # ---------------------------------------------------------------------------
 
@@ -1496,6 +1543,133 @@ def ocr_body() -> str:
     '''
 
 
+def projects_body() -> str:
+    return '''
+    <div class="page-head">
+      <h1>项目管理</h1>
+      <p>归档你的音视频工程 · 本地 SQLite 持久化</p>
+    </div>
+
+    <div class="card mb-20">
+      <div class="section-head"><span class="section-title">新建项目</span></div>
+      <div class="row row-wrap" style="gap:14px">
+        <input class="input" id="projName" placeholder="项目名称，如「产品介绍视频本地化」" style="flex:2;min-width:240px" />
+        <input class="input" id="projDesc" placeholder="备注（可选）" style="flex:2;min-width:240px" />
+        <button class="btn btn-primary" id="createBtn">创建项目</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-head"><span class="section-title">项目列表</span>
+        <span class="tag" id="projCount" style="margin-left:auto">0 个</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>名称</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <tbody id="projRows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyHint" style="padding:30px 0">暂无项目，先创建一个吧</div>
+      </div>
+    </div>
+
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      const statusMap={active:['status-pending','草稿'],in_progress:['status-running','进行中'],done:['status-done','已完成'],archived:['status-failed','已归档']};
+      async function load(){
+        const rows=await (await fetch('/api/projects')).json();
+        $('projCount').textContent=rows.length+' 个';
+        const tb=$('projRows'); tb.innerHTML='';
+        $('emptyHint').style.display=rows.length?'none':'';
+        rows.forEach(p=>{
+          const [cls,label]=statusMap[p.status]||['status-pending',p.status];
+          const tr=document.createElement('tr');
+          tr.innerHTML='<td><div style="font-weight:600">'+escapeHtml(p.name)+'</div><div class="muted" style="font-size:12px">'+escapeHtml(p.description||'')+'</div></td>'
+            +'<td><span class="status-pill '+cls+'">'+label+'</span></td>'
+            +'<td class="muted font-mono" style="font-size:12px">'+escapeHtml(p.updated_at||'')+'</td>'
+            +'<td><div class="row-actions"><button class="btn btn-ghost btn-sm" data-del="'+p.id+'">删除</button></div></td>';
+          tb.appendChild(tr);
+        });
+        tb.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',async()=>{
+          if(!confirm('确定删除该项目？'))return;
+          await fetch('/api/projects/'+b.dataset.del,{method:'DELETE'});
+          load();
+        }));
+      }
+      $('createBtn').addEventListener('click',async()=>{
+        const name=$('projName').value.trim();
+        if(!name){alert('请填写项目名称');return;}
+        await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description:$('projDesc').value.trim()})});
+        $('projName').value='';$('projDesc').value='';load();
+      });
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+      load();
+    })();
+    </script>
+    '''
+
+
+def settings_body() -> str:
+    return '''
+    <div class="page-head"><h1>设置</h1><p>工作台偏好与密钥状态 · 本地持久化</p></div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="section-head"><span class="section-title">大模型接入</span></div>
+        <div class="analysis-bar" id="llmStatus"></div>
+        <div class="notice notice-amber" style="margin-top:12px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          <span>密钥通过项目根 <code class="font-mono">.env</code> 注入（DEEPSEEK_API_KEY / ARK_API_KEY / QWEN_API_KEY / OPENAI_API_KEY），<b>修改后需重启服务</b>。</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-head"><span class="section-title">偏好</span></div>
+        <div style="margin-bottom:16px">
+          <label class="field-label">默认字幕语言</label>
+          <select class="select" id="prefLang">
+            <option value="zh,en">中文 + 英文</option>
+            <option value="zh">仅中文</option>
+            <option value="en">仅英文</option>
+          </select>
+        </div>
+        <div style="margin-bottom:16px">
+          <label class="field-label">默认转写模型</label>
+          <select class="select" id="prefModel">
+            <option value="small">small（推荐）</option>
+            <option value="base">base</option>
+            <option value="medium">medium</option>
+            <option value="tiny">tiny（最快）</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="saveBtn">保存偏好</button>
+        <span class="muted" id="saveHint" style="margin-left:10px"></span>
+      </div>
+    </div>
+
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      async function load(){
+        const s=await (await fetch('/api/comment/status')).json();
+        $('llmStatus').innerHTML = s.configured
+          ? '<span class="tag tag-accent">已接入真实大模型</span><span class="tag tag-purple">'+escapeHtml(s.provider||'LLM')+'</span>'
+          : '<span class="tag tag-amber">未接入（使用 Mock 模板）</span>';
+        const set=await (await fetch('/api/settings')).json();
+        if(set.default_lang) $('prefLang').value=set.default_lang;
+        if(set.default_model) $('prefModel').value=set.default_model;
+      }
+      $('saveBtn').addEventListener('click',async()=>{
+        await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({default_lang:$('prefLang').value,default_model:$('prefModel').value})});
+        $('saveHint').textContent='已保存 ✓'; setTimeout(()=>$('saveHint').textContent='',1500); load();
+      });
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+      load();
+    })();
+    </script>
+    '''
+
+
 def stub_body(title: str, page: str) -> str:
     return f'''
     <div class="page-head"><h1>{title}</h1><p>该模块将在后续开发阶段实现。</p></div>
@@ -1807,6 +1981,10 @@ async def app_page(page: str):
         return page_shell("系统录音", "record", record_body())
     if page == "comment":
         return page_shell("视频评论", "comment", comment_body())
+    if page == "projects":
+        return page_shell("项目管理", "projects", projects_body())
+    if page == "settings":
+        return page_shell("设置", "settings", settings_body())
     return page_shell(PAGE_TITLES[page], page, stub_body(PAGE_TITLES[page], page))
 
 

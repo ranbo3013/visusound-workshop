@@ -16,6 +16,9 @@ venv/
 static/uploads/
 static/downloads/
 
+# 本地数据库（SQLite，用户数据）
+data/
+
 # 本地助手记忆（非项目源码，勿提交）
 .workbuddy/
 
