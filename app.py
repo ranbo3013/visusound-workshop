@@ -1109,6 +1109,15 @@ async def api_projects():
     return db.list_projects()
 
 
+@app.get("/api/statusbar")
+async def api_statusbar():
+    """状态栏聚合计数（运行中任务 / 总任务 / 项目数）。"""
+    tasks = db.list_tasks(200)
+    running = sum(1 for t in tasks if t.get("status") in ("running", "pending"))
+    projects = db.list_projects()
+    return {"running": running, "total": len(tasks), "projects": len(projects)}
+
+
 @app.post("/api/projects")
 async def api_create_project(req: Request):
     data = await req.json()
@@ -1371,13 +1380,41 @@ def page_shell(title: str, active: str, body: str) -> str:
       {body}
     </main>
     <footer class="statusbar">
-      <span>Tasks: 3 运行中</span>
-      <span>Storage: 23.4 / 100 GB</span>
+      <span id="sbTasks">Tasks: —</span>
+      <span id="sbProjects">Projects: —</span>
       <span>本地优先 · 全功能媒体处理</span>
       <span style="margin-left:auto">VisuSound Workshop 声画工坊 · v2.0.0</span>
     </footer>
   </div>
 </div>
+''' + _SHELL_SCRIPT
+
+
+_SHELL_SCRIPT = '''
+<div class="toast-wrap" id="toastWrap"></div>
+<script>
+(function(){
+  window.showToast = function(msg, type){
+    type = type || 'info';
+    var wrap = document.getElementById('toastWrap');
+    if(!wrap) return;
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + type;
+    t.innerHTML = '<span class="toast-dot"></span><span>' + msg + '</span>';
+    wrap.appendChild(t);
+    setTimeout(function(){ t.classList.add('out'); setTimeout(function(){ t.remove(); }, 250); }, 2600);
+  };
+  // 状态栏真实计数
+  try {
+    fetch('/api/statusbar').then(function(r){return r.json();}).then(function(d){
+      var t = document.getElementById('sbTasks');
+      var p = document.getElementById('sbProjects');
+      if(t) t.textContent = 'Tasks: ' + d.running + ' 运行中 / ' + d.total + ' 总';
+      if(p) p.textContent = 'Projects: ' + d.projects;
+    }).catch(function(){});
+  } catch(e){}
+})();
+</script>
 </body>
 </html>'''
 
@@ -1560,8 +1597,10 @@ def dashboard_body() -> str:
                   +'<div class="muted" style="font-size:12px">'+escapeHtml(b.src)+'</div>';
                 box.appendChild(row);
               });
+              showToast('本地化完成：'+r.target_lang+' · '+r.blocks.length+' 条字幕','success');
             } else if(d.status==='failed'){
               $('plLog').textContent='失败：'+(d.result&&d.result.error||d.msg);
+              showToast('流水线失败：'+(d.result&&d.result.error||d.msg),'error');
             }
           }
         }).catch(()=>{});
@@ -1838,7 +1877,7 @@ def projects_body() -> str:
         tb.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',async()=>{
           if(!confirm('确定删除该项目？'))return;
           await fetch('/api/projects/'+b.dataset.del,{method:'DELETE'});
-          load();
+          showToast('项目已删除','info'); load();
         }));
       }
       $('createBtn').addEventListener('click',async()=>{
@@ -1846,6 +1885,7 @@ def projects_body() -> str:
         if(!name){alert('请填写项目名称');return;}
         await fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description:$('projDesc').value.trim()})});
         $('projName').value='';$('projDesc').value='';load();
+        showToast('项目已创建','success');
       });
       function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
       load();
@@ -1908,6 +1948,7 @@ def settings_body() -> str:
         await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({default_lang:$('prefLang').value,default_model:$('prefModel').value})});
         $('saveHint').textContent='已保存 ✓'; setTimeout(()=>$('saveHint').textContent='',1500); load();
+        showToast('偏好设置已保存','success');
       });
       function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
       load();
@@ -1991,6 +2032,7 @@ def tts_body() -> str:
           $('player').src='/api/download/'+encodeURIComponent(d.filename);
           $('dlBtn').href='/api/download/'+encodeURIComponent(d.filename);
           $('genMeta').textContent='时长 '+d.duration+'s · '+escapeHtml(d.emotion);
+          showToast('配音已生成（Mock · '+d.duration+'s）','success');
         }catch(err){alert('生成失败：'+err);}
         finally{$('genBtn').textContent='生成配音';$('genBtn').disabled=false;}
       });
@@ -2153,6 +2195,7 @@ def voice_clone_body() -> str:
           const d=await r.json();
           if(d.error){alert(d.error);return;}
           $('done').style.display='';$('doneMsg').textContent='克隆完成（Mock）：「'+name+'」已保存到声音库。';
+          showToast('音色「'+name+'」克隆完成（Mock）','success');
           window.scrollTo(0,$('done').offsetTop-80);
         }catch(err){alert('克隆失败：'+err);}
       });
