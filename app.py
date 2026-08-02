@@ -1300,6 +1300,202 @@ def dashboard_body() -> str:
     '''
 
 
+def subtitle_body() -> str:
+    return '''
+    <div class="page-head">
+      <h1>字幕提取</h1>
+      <p>从本地文件或 9 大平台视频提取字幕 · 支持弹幕兜底与中英双语合并</p>
+    </div>
+
+    <div class="card">
+      <div class="section-head"><span class="section-title">提取配置</span></div>
+      <div class="row row-wrap" style="gap:8px;margin-bottom:18px">
+        <button class="emotion-btn active" data-src="url">视频链接</button>
+        <button class="emotion-btn" data-src="file">本地文件</button>
+      </div>
+
+      <div id="urlWrap">
+        <label class="field-label">视频链接（B站 / YouTube / 抖音 / 腾讯 / 爱奇艺 / 优酷 / Vimeo / Twitch）</label>
+        <input class="input" id="videoUrl" placeholder="https://www.bilibili.com/video/BV1xx 或直链 .mp4" />
+      </div>
+      <div id="fileWrap" style="display:none">
+        <label class="field-label">上传视频文件</label>
+        <div class="upload-zone" id="fileDrop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <div>拖拽视频到此处，或 <span style="color:var(--accent)">点击选择</span></div>
+          <div class="muted" style="font-size:12px;margin-top:6px" id="fileName"></div>
+          <input type="file" id="videoFile" accept="video/*" hidden />
+        </div>
+      </div>
+
+      <div class="row row-wrap" style="gap:18px;margin-top:16px">
+        <div style="flex:1;min-width:200px">
+          <label class="field-label">字幕语言</label>
+          <select class="select" id="languages">
+            <option value="zh,en">中文 + 英文</option>
+            <option value="zh">仅中文</option>
+            <option value="en">仅英文</option>
+            <option value="">所有语言</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <label class="field-label">Cookie（可选 · 会员/受限视频）</label>
+          <input class="input" id="cookies" placeholder="session_id=abc123" />
+        </div>
+      </div>
+
+      <div class="row row-wrap" style="gap:14px;margin-top:14px">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary)">
+          <input type="checkbox" id="browserCookie" /> 从 Chrome 浏览器自动读取 Cookie
+        </label>
+        <button class="btn btn-primary" id="extractBtn" style="margin-left:auto">提取字幕</button>
+      </div>
+    </div>
+
+    <div class="card mt-24" id="resultCard" style="display:none">
+      <div class="section-head"><span class="section-title">提取结果</span></div>
+      <div class="analysis-bar" id="resultMeta"></div>
+      <div id="warnBox"></div>
+      <div class="grid grid-2 mt-16" id="fileList"></div>
+    </div>
+
+    <script>
+    (function(){
+      const $ = (id)=>document.getElementById(id);
+      let curSrc='url', pickedFile=null;
+      document.querySelectorAll('[data-src]').forEach(b=>b.addEventListener('click',()=>{
+        document.querySelectorAll('[data-src]').forEach(x=>x.classList.remove('active'));
+        b.classList.add('active'); curSrc=b.dataset.src;
+        $('urlWrap').style.display = curSrc==='url'?'':'none';
+        $('fileWrap').style.display = curSrc==='file'?'':'none';
+      }));
+      $('fileDrop').addEventListener('click',()=>$('videoFile').click());
+      $('videoFile').addEventListener('change',e=>{
+        pickedFile=e.target.files[0]||null;
+        $('fileName').textContent = pickedFile?('已选择：'+pickedFile.name):'';
+      });
+      $('extractBtn').addEventListener('click',async()=>{
+        const fd=new FormData();
+        if(curSrc==='url'){
+          const u=$('videoUrl').value.trim();
+          if(!u){alert('请填写视频链接');return;}
+          fd.append('video_url',u);
+        } else {
+          if(!pickedFile){alert('请选择视频文件');return;}
+          fd.append('file',pickedFile);
+        }
+        fd.append('languages',$('languages').value);
+        fd.append('cookies',$('cookies').value.trim());
+        fd.append('cookies_from_browser',$('browserCookie').checked?'chrome':'');
+        $('extractBtn').textContent='提取中…';$('extractBtn').disabled=true;
+        try{
+          const r=await fetch('/api/extract',{method:'POST',body:fd});
+          const d=await r.json();
+          if(d.warning){ $('warnBox').innerHTML='<div class="notice notice-amber"><span>'+escapeHtml(d.warning)+'</span></div>'; }
+          else { $('warnBox').innerHTML=''; }
+          if(!d.success && d.error){ $('warnBox').innerHTML='<div class="notice notice-amber"><span>'+escapeHtml(d.error)+'</span></div>'; $('resultCard').style.display='none'; return; }
+          render(d);
+        }catch(err){ alert('请求失败：'+err); }
+        finally{$('extractBtn').textContent='提取字幕';$('extractBtn').disabled=false;}
+      });
+      function render(d){
+        $('resultCard').style.display='';
+        let tags='<span class="tag tag-accent">字幕提取完成</span>';
+        if(d.bilingual) tags+=' <span class="tag tag-purple">含双语合并</span>';
+        $('resultMeta').innerHTML=tags;
+        const list=$('fileList'); list.innerHTML='';
+        const files=[];
+        for(const [lang,name] of Object.entries(d.files||{})) files.push({lang,name});
+        if(d.bilingual) files.push({lang:'bilingual',name:d.bilingual});
+        if(!files.length){ list.innerHTML='<div class="muted">未生成文件</div>'; return; }
+        files.forEach(f=>{
+          const div=document.createElement('div'); div.className='card';
+          div.innerHTML='<div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="tag">'+(f.lang==='bilingual'?'双语合并':f.lang)+'</span></div>'
+            +'<div class="muted font-mono" style="font-size:12px;margin-bottom:12px">'+escapeHtml(f.name)+'</div>'
+            +'<div class="row" style="gap:8px"><a class="btn btn-secondary btn-sm" href="/api/download/'+encodeURIComponent(f.name)+'" target="_blank">下载</a>'
+            +'<button class="btn btn-ghost btn-sm" data-name="'+escapeHtml(f.name)+'">复制文本</button></div>';
+          list.appendChild(div);
+        });
+        list.querySelectorAll('button[data-name]').forEach(btn=>{
+          btn.addEventListener('click',async()=>{
+            try{ const t=await (await fetch('/api/download/'+encodeURIComponent(btn.dataset.name))).text();
+              navigator.clipboard.writeText(t); btn.textContent='已复制'; setTimeout(()=>btn.textContent='复制文本',1200);
+            }catch(e){ alert('复制失败'); }
+          });
+        });
+      }
+      function escapeHtml(s){return s.replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+    })();
+    </script>
+    '''
+
+
+def ocr_body() -> str:
+    return '''
+    <div class="page-head"><h1>图片识别</h1><p>上传图片，OCR 提取其中文字 · 中英双语</p></div>
+    <div class="card">
+      <div class="section-head"><span class="section-title">识别配置</span></div>
+      <div class="upload-zone" id="fileDrop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>
+        <div>拖拽图片到此处，或 <span style="color:var(--accent)">点击选择</span>（PNG / JPG / WEBP）</div>
+        <div class="muted" style="font-size:12px;margin-top:6px" id="fileName"></div>
+        <input type="file" id="imageFile" accept="image/*" hidden />
+      </div>
+      <div style="margin-top:16px;max-width:280px">
+        <label class="field-label">识别语言</label>
+        <select class="select" id="language">
+          <option value="chi_sim+eng">中文 + 英文</option>
+          <option value="chi_sim">仅中文</option>
+          <option value="eng">仅英文</option>
+          <option value="jpn">日文</option>
+        </select>
+      </div>
+      <div class="row" style="gap:10px;margin-top:16px">
+        <button class="btn btn-primary" id="ocrBtn" style="margin-left:auto">识别文字</button>
+      </div>
+      <div class="notice notice-amber" style="margin-top:14px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+        <span>需要本机安装 Tesseract OCR 引擎：<code class="font-mono">brew install tesseract tesseract-lang</code></span>
+      </div>
+    </div>
+    <div class="card mt-24" id="resultCard" style="display:none">
+      <div class="section-head"><span class="section-title">识别结果</span>
+        <div class="row" style="margin-left:auto;gap:8px">
+          <button class="btn btn-secondary btn-sm" id="copyBtn">复制</button>
+          <button class="btn btn-secondary btn-sm" id="downloadBtn">下载 TXT</button>
+        </div>
+      </div>
+      <div class="analysis-bar" id="resultMeta"></div>
+      <textarea class="input" id="resultText" rows="12" style="margin-top:12px;font-family:var(--font-mono)"></textarea>
+    </div>
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      let picked=null;
+      $('fileDrop').addEventListener('click',()=>$('imageFile').click());
+      $('imageFile').addEventListener('change',e=>{picked=e.target.files[0]||null;$('fileName').textContent=picked?('已选择：'+picked.name):'';});
+      $('ocrBtn').addEventListener('click',async()=>{
+        if(!picked){alert('请选择图片');return;}
+        const fd=new FormData(); fd.append('file',picked); fd.append('language',$('language').value);
+        $('ocrBtn').textContent='识别中…';$('ocrBtn').disabled=true;
+        try{
+          const r=await fetch('/api/ocr',{method:'POST',body:fd});
+          const d=await r.json();
+          if(d.error){ alert(d.error); return; }
+          $('resultCard').style.display='';
+          $('resultText').value=d.text||'（未识别到文字）';
+          $('resultMeta').innerHTML='<span class="tag tag-accent">识别完成</span><span class="tag">'+escapeHtml(d.filename||'')+'</span>';
+        }catch(err){ alert('请求失败：'+err); }
+        finally{$('ocrBtn').textContent='识别文字';$('ocrBtn').disabled=false;}
+      });
+      $('copyBtn').addEventListener('click',()=>{navigator.clipboard.writeText($('resultText').value);$('copyBtn').textContent='已复制';setTimeout(()=>$('copyBtn').textContent='复制',1200);});
+      $('downloadBtn').addEventListener('click',()=>{const b=new Blob([$('resultText').value],{type:'text/plain'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='ocr_result.txt';a.click();});
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+    })();
+    </script>
+    '''
+
+
 def stub_body(title: str, page: str) -> str:
     return f'''
     <div class="page-head"><h1>{title}</h1><p>该模块将在后续开发阶段实现。</p></div>
@@ -1308,6 +1504,126 @@ def stub_body(title: str, page: str) -> str:
       <div>「{title}」模块开发中</div>
       <div class="muted" style="font-size:13px;max-width:440px">现有能力（字幕提取 / 图片识别 / 语音转写 / 系统录音）将在阶段 1 迁入此工作台；AI 配音、批量配音、声音库、声音克隆、任务队列、项目管理、设置将在阶段 2–4 实现。</div>
     </div>
+    '''
+
+
+def transcribe_body() -> str:
+    return '''
+    <div class="page-head"><h1>语音转写</h1><p>Whisper 语音识别 · 自动简繁转换 · 输出带时间轴文本</p></div>
+    <div class="card">
+      <div class="section-head"><span class="section-title">转写配置</span></div>
+      <div class="row row-wrap" style="gap:8px;margin-bottom:18px">
+        <button class="emotion-btn active" data-src="url">视频/音频链接</button>
+        <button class="emotion-btn" data-src="file">本地文件</button>
+      </div>
+      <div id="urlWrap"><label class="field-label">视频/音频链接</label><input class="input" id="videoUrl" placeholder="https://... 或直接粘贴媒体地址" /></div>
+      <div id="fileWrap" style="display:none"><label class="field-label">上传文件</label>
+        <div class="upload-zone" id="fileDrop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><div>拖拽媒体到此处，或 <span style="color:var(--accent)">点击选择</span></div><div class="muted" style="font-size:12px;margin-top:6px" id="fileName"></div><input type="file" id="mediaFile" accept="video/*,audio/*" hidden /></div></div>
+      <div class="row row-wrap" style="gap:18px;margin-top:16px">
+        <div style="flex:1;min-width:200px"><label class="field-label">语言</label><select class="select" id="language"><option value="auto">自动检测</option><option value="zh">中文</option><option value="en">英文</option><option value="ja">日文</option><option value="ko">韩文</option></select></div>
+        <div style="flex:1;min-width:200px"><label class="field-label">模型规模</label><select class="select" id="modelSize"><option value="tiny">tiny（最快）</option><option value="base">base</option><option value="small" selected>small（推荐）</option><option value="medium">medium</option><option value="large">large（最准）</option></select></div>
+      </div>
+      <div class="notice notice-amber" style="margin-top:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>首次使用会按需下载 Whisper 模型；可在本机预装 <code class="font-mono">openai-whisper</code> 以加速。</span></div>
+      <div class="row" style="gap:10px;margin-top:16px"><button class="btn btn-primary" id="transBtn" style="margin-left:auto">开始转写</button></div>
+    </div>
+    <div class="card mt-24" id="resultCard" style="display:none">
+      <div class="section-head"><span class="section-title">转写结果</span>
+        <div class="row" style="margin-left:auto;gap:8px">
+          <a class="btn btn-secondary btn-sm" id="dlTxt" target="_blank">下载 TXT</a>
+          <a class="btn btn-secondary btn-sm" id="dlSrt" target="_blank">下载 SRT</a>
+        </div>
+      </div>
+      <div class="analysis-bar" id="resultMeta"></div>
+      <textarea class="input" id="resultText" rows="14" style="margin-top:12px;font-family:var(--font-mono)"></textarea>
+    </div>
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      let curSrc='url',picked=null;
+      document.querySelectorAll('[data-src]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-src]').forEach(x=>x.classList.remove('active'));b.classList.add('active');curSrc=b.dataset.src;$('urlWrap').style.display=curSrc==='url'?'':'none';$('fileWrap').style.display=curSrc==='file'?'':'none';}));
+      $('fileDrop').addEventListener('click',()=>$('mediaFile').click());
+      $('mediaFile').addEventListener('change',e=>{picked=e.target.files[0]||null;$('fileName').textContent=picked?('已选择：'+picked.name):'';});
+      $('transBtn').addEventListener('click',async()=>{
+        const fd=new FormData();
+        if(curSrc==='url'){const u=$('videoUrl').value.trim();if(!u){alert('请填写链接');return;}fd.append('video_url',u);}
+        else{if(!picked){alert('请选择文件');return;}fd.append('file',picked);}
+        fd.append('language',$('language').value);fd.append('model_size',$('modelSize').value);
+        $('transBtn').textContent='转写中…（可能较慢）';$('transBtn').disabled=true;
+        try{const r=await fetch('/api/transcribe',{method:'POST',body:fd});const d=await r.json();
+          if(d.error){alert(d.error);return;}
+          $('resultCard').style.display='';
+          $('resultText').value=d.text||'';
+          $('resultMeta').innerHTML='<span class="tag tag-accent">转写完成</span><span class="tag">语言 '+escapeHtml(d.language||'auto')+'</span><span class="tag">'+d.segments+' 句</span>';
+          if(d.files){$('dlTxt').href='/api/download/'+encodeURIComponent(d.files.txt);$('dlSrt').href='/api/download/'+encodeURIComponent(d.files.srt);}
+        }catch(err){alert('请求失败：'+err);}
+        finally{$('transBtn').textContent='开始转写';$('transBtn').disabled=false;}
+      });
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+    })();
+    </script>
+    '''
+
+
+def record_body() -> str:
+    return '''
+    <div class="page-head"><h1>系统录音</h1><p>采集 macOS 系统音频（经 BlackHole 虚拟声卡）· 生成 WAV / MP3</p></div>
+    <div class="card">
+      <div class="section-head"><span class="section-title">录音设置</span></div>
+      <div style="max-width:280px"><label class="field-label">输出格式</label>
+        <select class="select" id="format"><option value="wav">WAV（无损）</option><option value="mp3">MP3</option><option value="m4a">M4A (AAC)</option><option value="aac">AAC</option></select></div>
+      <div class="notice notice-amber" style="margin-top:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>需先安装 <code class="font-mono">brew install blackhole-2ch</code> 与 <code class="font-mono">switchaudio-osx</code>，并将系统输出切到 BlackHole。仅支持 macOS。</span></div>
+      <div class="row" style="gap:12px;margin-top:18px">
+        <button class="btn btn-primary" id="startBtn"><svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><circle cx="12" cy="12" r="6"/></svg> 开始录音</button>
+        <button class="btn btn-danger" id="stopBtn" disabled>停止并保存</button>
+      </div>
+    </div>
+    <div class="card mt-24" id="statusCard" style="display:none">
+      <div class="section-head"><span class="section-title">录音中</span><span class="tag tag-amber" style="margin-left:auto" id="recTimer">00:00</span></div>
+      <div class="row" style="gap:10px;align-items:center"><div style="width:12px;height:12px;border-radius:50%;background:var(--danger)"></div><div class="muted">正在采集系统音频…</div></div>
+    </div>
+    <div class="card mt-24" id="resultCard" style="display:none">
+      <div class="section-head"><span class="section-title">录音文件</span></div>
+      <div class="analysis-bar" id="resultMeta"></div>
+      <div class="row" style="gap:14px;margin-top:14px;align-items:center">
+        <audio id="player" controls style="flex:1;max-width:420px"></audio>
+        <a class="btn btn-secondary btn-sm" id="dlBtn" target="_blank">下载</a>
+      </div>
+    </div>
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      let timer=null;
+      function fmt(s){const m=Math.floor(s/60),ss=Math.floor(s%60);return String(m).padStart(2,'0')+':'+String(ss).padStart(2,'0');}
+      function tick(){$('recTimer').textContent=fmt((Date.now()-window.__recStart)/1000);}
+      $('startBtn').addEventListener('click',async()=>{
+        const fd=new FormData();fd.append('format',$('format').value);
+        try{const r=await fetch('/api/record/start',{method:'POST',body:fd});const d=await r.json();
+          if(d.error){alert(d.error);return;}
+          window.__recStart=Date.now();
+          $('statusCard').style.display='';$('resultCard').style.display='none';
+          $('startBtn').disabled=true;$('stopBtn').disabled=false;
+          timer=setInterval(tick,1000); poll();
+        }catch(err){alert('启动失败：'+err);}
+      });
+      async function poll(){
+        try{const s=await (await fetch('/api/record/status')).json();
+          if(s.recording){$('recTimer').textContent=fmt(s.elapsed_seconds||0);setTimeout(poll,1500);}
+        }catch(e){}
+      }
+      $('stopBtn').addEventListener('click',async()=>{
+        clearInterval(timer);$('stopBtn').disabled=true;
+        try{const r=await fetch('/api/record/stop',{method:'POST'});const d=await r.json();
+          if(d.error){alert(d.error);return;}
+          $('statusCard').style.display='none';$('resultCard').style.display='';
+          $('startBtn').disabled=false;
+          $('resultMeta').innerHTML='<span class="tag tag-accent">录音完成</span><span class="tag">时长 '+d.duration_seconds+'s</span><span class="tag">'+(d.size_bytes/1024).toFixed(1)+' KB</span>';
+          $('player').src='/api/download/'+encodeURIComponent(d.filename);
+          $('dlBtn').href='/api/download/'+encodeURIComponent(d.filename);
+        }catch(err){alert('停止失败：'+err);}
+        finally{$('stopBtn').disabled=false;}
+      });
+    })();
+    </script>
     '''
 
 
@@ -1481,6 +1797,14 @@ async def app_page(page: str):
         )
     if page == "dashboard":
         return page_shell("仪表盘", "dashboard", dashboard_body())
+    if page == "subtitle":
+        return page_shell("字幕提取", "subtitle", subtitle_body())
+    if page == "ocr":
+        return page_shell("图片识别", "ocr", ocr_body())
+    if page == "transcribe":
+        return page_shell("语音转写", "transcribe", transcribe_body())
+    if page == "record":
+        return page_shell("系统录音", "record", record_body())
     if page == "comment":
         return page_shell("视频评论", "comment", comment_body())
     return page_shell(PAGE_TITLES[page], page, stub_body(PAGE_TITLES[page], page))
