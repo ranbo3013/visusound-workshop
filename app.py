@@ -2631,6 +2631,18 @@ def comment_body() -> str:
         <label class="field-label">或直接粘贴视频文案（可选，免联网分析）</label>
         <textarea class="input" id="rawText" rows="2" placeholder="把视频字幕 / 口播文案粘贴到这里…"></textarea>
       </div>
+      <div class="audio-transcribe">
+        <label class="field-label">🎧 或上传本机音频 / 视频，自动转写为口播文字</label>
+        <div class="row" style="gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer">
+            选择文件
+            <input type="file" id="audioFile" accept="audio/*,video/*" hidden />
+          </label>
+          <span id="audioName" class="muted" style="font-size:13px">未选择文件</span>
+          <button class="btn btn-primary btn-sm" id="transcribeBtn" style="margin-left:auto">转写并填入</button>
+        </div>
+        <div class="notice notice-accent" id="transcribeNotice" style="margin-top:10px;display:none"><span></span></div>
+      </div>
       <div class="slider-row">
         <span class="slider-label">评论字数</span>
         <input type="range" id="maxWords" min="20" max="300" step="10" value="100" />
@@ -2681,6 +2693,32 @@ def comment_body() -> str:
     (function(){
       const $ = (id) => document.getElementById(id);
       let curTone = 'auto';
+      // —— 本机音频 → 口播文字 → 写评论 ——
+      const transNotice = $('transcribeNotice');
+      const setTransNotice = (cls, msg) => { transNotice.className = 'notice ' + cls; transNotice.querySelector('span').textContent = msg; transNotice.style.display = ''; };
+      $('audioFile').addEventListener('change', e => {
+        const f = e.target.files[0];
+        $('audioName').textContent = f ? ('已选择：' + f.name) : '未选择文件';
+      });
+      $('transcribeBtn').addEventListener('click', async () => {
+        const f = $('audioFile').files[0];
+        if (!f) { alert('请先选择本机音频 / 视频文件'); return; }
+        $('transcribeBtn').textContent = '转写中…（较慢）'; $('transcribeBtn').disabled = true;
+        setTransNotice('notice-amber', '正在用 Whisper 转写口播文字，音频越长越慢，请稍候…');
+        try {
+          const fd = new FormData(); fd.append('file', f);
+          const r = await fetch('/api/transcribe', {method:'POST', body: fd});
+          const d = await r.json();
+          if (d.error) { setTransNotice('notice-amber', '转写失败：' + d.error); return; }
+          $('rawText').value = d.text || '';
+          $('videoUrl').value = '';
+          setTransNotice('notice-accent', '✅ 已转写 ' + (d.text ? d.text.length : 0) + ' 字口播文字（语言 ' + (d.language || 'auto') + '，' + (d.segments || 0) + ' 句），已填入文案框，点「分析并生成评论」即可。');
+        } catch (err) {
+          setTransNotice('notice-amber', '请求失败：' + err);
+        } finally {
+          $('transcribeBtn').textContent = '转写并填入'; $('transcribeBtn').disabled = false;
+        }
+      });
       $('toneGroup').addEventListener('click', e => {
         const b = e.target.closest('.emotion-btn'); if(!b) return;
         [...$('toneGroup').children].forEach(x=>x.classList.remove('active'));
@@ -2756,7 +2794,9 @@ def comment_body() -> str:
         a.download = 'douyin_comments.txt'; a.click();
       });
       $('resetBtn').addEventListener('click', () => {
-        $('videoUrl').value=''; $('rawText').value=''; $('resultCard').style.display='none';
+        $('videoUrl').value=''; $('rawText').value='';
+        $('audioFile').value=''; $('audioName').textContent='未选择文件'; transNotice.style.display='none';
+        $('resultCard').style.display='none';
       });
       // 首屏探测 LLM 是否已接入
       fetch('/api/comment/status').then(r=>r.json()).then(s=>{

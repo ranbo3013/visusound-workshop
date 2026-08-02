@@ -305,6 +305,14 @@ label.field-label { display: block; font-size: 12px; color: var(--text-secondary
 .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: var(--accent-soft); color: var(--text-secondary); }
 .upload-zone svg { width: 38px; height: 38px; margin-bottom: 12px; }
 
+/* ============================ 音频转写入口 ============================ */
+.audio-transcribe {
+  margin-bottom: 16px; padding: 14px 16px;
+  border: 1px dashed var(--border-light); border-radius: var(--r-md);
+  background: var(--accent-tint-soft, rgba(124, 92, 252, .04));
+}
+.audio-transcribe .field-label { margin-bottom: 0; }
+
 /* ============================ 滑块 ============================ */
 input[type="range"] { -webkit-appearance: none; width: 100%; height: 4px; border-radius: 2px; background: var(--bg-elevated); outline: none; }
 input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); cursor: pointer; border: 2px solid var(--bg-primary); transition: all .2s; }
