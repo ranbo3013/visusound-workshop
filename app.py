@@ -970,18 +970,24 @@ async def _generate_comments_with_llm(analysis_text: str, max_words: int, tone: 
     if not cfg:
         return None
     text = analysis_text.strip()[:1500] or "这个视频"
+    min_words = max(30, round(max_words * 0.7))
     tone_hint = "" if tone == "auto" else f"\n整体语气风格：{tone}（走心/有趣/提问/犀利/客观 之一）。"
     user_prompt = (
         f"视频内容：\n{text}\n\n"
-        f"请生成 {count} 条评论，每条不超过 {max_words} 个汉字（含标点）。{tone_hint}\n"
+        f"请生成 {count} 条评论。每条目标长度约 {max_words} 个汉字（含标点），"
+        f"请严格控制在 {min_words}–{max_words} 字之间，尽量写满、接近上限 {max_words} 字，"
+        f"千万不要少于 {min_words} 字。{tone_hint}\n"
         f"只输出一个 JSON 数组，不要包含任何解释或 markdown 代码块。"
         f'每个元素为对象：{{"tone": "语气标签", "text": "评论正文"}}。'
     )
     system_prompt = (
         "你是一个擅长写抖音/短视频评论的助手。根据视频内容生成自然、有共鸣、"
-        "不夸张、不像机器生成的评论。口语化、简短有力，避免说教和营销腔。"
+        "不夸张、不像机器生成的评论。口语化、有内容、避免说教和营销腔。"
+        "重要：每条评论都要写满、接近设定的字数上限，不要写得太短。"
     )
     try:
+        # 输出 token 上限需随评论数量与字数放大，否则长评论会被截断丢弃
+        max_out = max(1200, count * max_words * 2 + 300)
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{cfg['base_url']}/chat/completions",
@@ -994,7 +1000,7 @@ async def _generate_comments_with_llm(analysis_text: str, max_words: int, tone: 
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.9,
-                    "max_tokens": 1200,
+                    "max_tokens": max_out,
                 },
             )
             resp.raise_for_status()
@@ -1026,7 +1032,13 @@ def _parse_llm_comments(content: str, max_words: int, count: int, tone: str) -> 
         if isinstance(item, dict) and item.get("text"):
             t = str(item["text"]).strip()
             if len(t) > max_words:
-                t = t[:max_words]
+                # 截断时尽量落在句末标点，避免出现半截句子
+                cut = t.rfind("。", max_words - 12, max_words)
+                if cut == -1:
+                    cut = t.rfind("！", max_words - 12, max_words)
+                if cut == -1:
+                    cut = t.rfind("？", max_words - 12, max_words)
+                t = t[:cut + 1] if cut != -1 else t[:max_words]
             tlabel = str(item.get("tone") or tone or "auto").strip() or "评论"
             out.append({"tone": tlabel, "text": t, "words": len(t)})
     return out
@@ -1070,7 +1082,7 @@ async def api_comment_generate(
         else:
             chosen = [tone] if tone in _TONE_TEMPLATES else list(_TONE_TEMPLATES.keys())
         chosen = chosen[:count]
-        seg_len = max(8, int(max_words * 0.5))
+        seg_len = max(8, max_words - 20)
         seg = analysis_text[:seg_len].strip() or "这个视频"
         comments = []
         for t in chosen:
@@ -2489,14 +2501,21 @@ def comment_body() -> str:
           div.innerHTML = '<div class="row" style="margin-bottom:10px"><span class="tag tag-purple">'+c.tone+'</span>'
             + '<span class="comment-words" style="margin-left:auto">'+c.words+' 字</span></div>'
             + '<div class="comment-text">'+escapeHtml(c.text)+'</div>'
-            + '<div class="comment-foot"><button class="btn btn-ghost btn-sm comment-copy" data-text="'+encodeURIComponent(c.text)+'">复制</button></div>';
+            + '<div class="comment-foot"><button class="btn btn-ghost btn-icon comment-copy" title="复制" data-text="'+encodeURIComponent(c.text)+'">'
+            + '<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+            + '<svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M20 6 9 17l-5-5"/></svg>'
+            + '</button></div>';
           list.appendChild(div);
         });
         $('resultCard').style.display = '';
         list.querySelectorAll('.comment-copy').forEach(btn => {
           btn.addEventListener('click', () => {
             navigator.clipboard.writeText(decodeURIComponent(btn.dataset.text));
-            btn.textContent = '已复制'; setTimeout(()=>btn.textContent='复制', 1200);
+            const cp = btn.querySelector('.ic-copy'); const ck = btn.querySelector('.ic-check');
+            cp.style.display='none'; ck.style.display='';
+            btn.classList.add('copied'); btn.title='已复制';
+            clearTimeout(btn._t);
+            btn._t = setTimeout(()=>{ cp.style.display=''; ck.style.display='none'; btn.classList.remove('copied'); btn.title='复制'; }, 1400);
           });
         });
       }

@@ -313,6 +313,9 @@ td .row-actions { display: flex; gap: 8px; }
 .comment-foot { display: flex; align-items: center; margin-top: 12px; }
 .comment-words { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 .comment-copy { margin-left: auto; }
+.btn-icon { padding: 7px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); line-height: 0; }
+.btn-icon svg { width: 16px; height: 16px; }
+.comment-copy.copied { color: var(--success); }
 .analysis-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .analysis-snippet { color: var(--text-muted); font-size: 12px; margin-top: 8px; max-height: 64px; overflow: auto; line-height: 1.6; }
 
