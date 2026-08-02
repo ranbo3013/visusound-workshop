@@ -1350,6 +1350,7 @@ PAGE_TITLES = {
     "ocr": "图片识别", "transcribe": "语音转写", "record": "系统录音",
     "dubbing": "AI 配音", "batch-dubbing": "多人批量配音", "sound-library": "声音库",
     "voice-clone": "声音克隆", "comment": "视频评论", "queue": "任务队列", "settings": "设置",
+    "assistant": "AI 助手",
 }
 
 
@@ -1442,6 +1443,92 @@ _SHELL_SCRIPT = '''
       if(p) p.textContent = 'Projects: ' + d.projects;
     }).catch(function(){});
   } catch(e){}
+})();
+</script>
+</body>
+</html>'''
+
+
+_ASSISTANT_ICONS = {
+    "dashboard": '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+    "subtitle": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    "dubbing": '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>',
+    "settings": '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+}
+
+
+def _assistant_nav_html(active: str) -> str:
+    items = [
+        ("dashboard", "首页"),
+        ("subtitle", "字幕"),
+        ("dubbing", "配音"),
+        ("settings", "设置"),
+    ]
+    out = []
+    out.append('<a class="assistant-logo" href="/app/dashboard" title="返回声画工坊">'
+               '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+               '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>'
+               '</svg></a>')
+    for key, label in items:
+        act = " active" if key == active else ""
+        out.append(
+            f'<a class="assistant-nav-item{act}" href="/app/{key}" title="{label}">'
+            f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{_ASSISTANT_ICONS[key]}</svg>'
+            f'<span>{label}</span></a>')
+    return "\n".join(out)
+
+
+def assistant_shell(title: str, body: str) -> str:
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} · 声画工坊</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="assistant-body">
+<div class="assistant-page">
+  <aside class="assistant-sidebar">
+    <div class="assistant-sidebar-top">{_assistant_nav_html("dashboard")}</div>
+    <div class="assistant-sidebar-bottom">
+      <a class="assistant-nav-item" href="/app/settings" title="更多">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        <span>更多</span>
+      </a>
+    </div>
+  </aside>
+  <div class="assistant-main">
+    <header class="assistant-header">
+      <div class="assistant-header-left"></div>
+      <div class="assistant-header-right">
+        <div class="assistant-points"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><span>10000 积分</span></div>
+        <a class="assistant-back" href="/app/dashboard">返回旧版 <span>›</span></a>
+        <div class="assistant-user" title="磊哥">磊</div>
+      </div>
+    </header>
+    <main class="assistant-content">
+      {body}
+    </main>
+  </div>
+  <button class="assistant-fab" type="button">✨ 快速上手</button>
+</div>
+''' + '''
+<div class="toast-wrap" id="toastWrap"></div>
+<script>
+(function(){
+  window.showToast = function(msg, type){
+    type = type || 'info';
+    var wrap = document.getElementById('toastWrap');
+    if(!wrap) return;
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + type;
+    t.innerHTML = '<span class="toast-dot"></span><span>' + msg + '</span>';
+    wrap.appendChild(t);
+    setTimeout(function(){ t.classList.add('out'); setTimeout(function(){ t.remove(); }, 250); }, 2600);
+  };
 })();
 </script>
 </body>
@@ -1655,6 +1742,111 @@ def dashboard_body() -> str:
           curJob=d.job_id;timer=setInterval(poll,1500);poll();
         }catch(e){alert('启动失败：'+e);}
         finally{$('plRun').disabled=false;$('plRun').textContent='启动本地化流水线';}
+      });
+    })();
+    </script>
+    '''
+
+
+def assistant_body() -> str:
+    return '''
+    <section class="assistant-hero">
+      <div class="assistant-avatar">
+        <img src="/static/images/2_48.png" alt="AI 助手" />
+      </div>
+      <div class="assistant-greeting">
+        <h1><span class="assistant-moon">🌙</span> 晚上好！</h1>
+        <p>今天有什么事需要我处理？</p>
+      </div>
+    </section>
+
+    <nav class="assistant-tags" aria-label="快捷能力">
+      <button class="assistant-tag assistant-tag-active" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        <span>VisuClaw</span>
+      </button>
+      <button class="assistant-tag" type="button"><span>PPT</span></button>
+      <button class="assistant-tag" type="button"><span>生图</span></button>
+      <button class="assistant-tag" type="button"><span>文档</span></button>
+      <button class="assistant-tag" type="button"><span>可视化页面</span></button>
+      <button class="assistant-tag" type="button"><span>更多</span></button>
+    </nav>
+
+    <div class="assistant-input-card">
+      <textarea class="assistant-input" placeholder="VisuClaw" rows="3"></textarea>
+      <div class="assistant-input-foot">
+        <div class="assistant-input-left">
+          <button class="assistant-icon-btn" type="button" title="添加附件">+</button>
+          <button class="assistant-pill-btn" type="button">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            <span>快捷发送</span>
+          </button>
+        </div>
+        <div class="assistant-input-right">
+          <button class="assistant-pill-btn" type="button">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="#22c55e"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            <span>DeepSeek-V3 Pro</span>
+          </button>
+          <button class="assistant-icon-btn" type="button" title="发送">↑</button>
+        </div>
+      </div>
+    </div>
+
+    <section class="assistant-popular">
+      <div class="assistant-section-title">热门玩法</div>
+      <div class="assistant-cards">
+        <div class="assistant-card">
+          <div class="assistant-card-head">
+            <div class="assistant-card-icon" style="background:#fee2e2"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg></div>
+            <div class="assistant-card-title">小红书爆款笔记拆解</div>
+          </div>
+          <p class="assistant-card-desc">五个秘籍，秒出拆解报告+可复用文案，爆款不再玄学</p>
+          <button class="assistant-card-btn assistant-card-btn-primary" type="button">试一下</button>
+        </div>
+        <div class="assistant-card">
+          <div class="assistant-card-head">
+            <div class="assistant-card-icon" style="background:#fef3c7"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></svg></div>
+            <div class="assistant-card-title">电商详情图一键生成</div>
+          </div>
+          <p class="assistant-card-desc">传张产品图或说个产品名，10 款详情图直接上架，适配五大平台</p>
+          <button class="assistant-card-btn" type="button">试一下</button>
+        </div>
+        <div class="assistant-card">
+          <div class="assistant-card-head">
+            <div class="assistant-card-icon" style="background:#dbeafe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+            <div class="assistant-card-title">文科交互式课件生成器</div>
+          </div>
+          <p class="assistant-card-desc">上传教材文件，一键生成精美互动课件，课堂演示+课后精读都能用</p>
+          <button class="assistant-card-btn" type="button">试一下</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="assistant-skill-market">
+      <div class="assistant-skill-left">
+        <div class="assistant-skill-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
+        <div>
+          <div class="assistant-skill-title">技能市场</div>
+          <div class="assistant-skill-sub">探索和安装技能，增强你的 VisuClaw</div>
+        </div>
+      </div>
+      <a class="assistant-skill-link" href="#">去逛逛 <span>›</span></a>
+    </section>
+
+    <script>
+    (function(){
+      var tags = document.querySelectorAll('.assistant-tag');
+      tags.forEach(function(t){
+        t.addEventListener('click', function(){
+          tags.forEach(function(x){ x.classList.remove('assistant-tag-active'); });
+          this.classList.add('assistant-tag-active');
+        });
+      });
+      var btns = document.querySelectorAll('.assistant-card-btn, .assistant-fab, .assistant-pill-btn, .assistant-icon-btn');
+      btns.forEach(function(b){
+        b.addEventListener('click', function(){
+          if(window.showToast) showToast('能力即将上线，敬请期待','info');
+        });
       });
     })();
     </script>
@@ -2621,6 +2813,8 @@ async def app_page(page: str):
         return page_shell("声音库", "sound-library", sound_library_body())
     if page == "voice-clone":
         return page_shell("声音克隆", "voice-clone", voice_clone_body())
+    if page == "assistant":
+        return assistant_shell("AI 助手", assistant_body())
     return page_shell(PAGE_TITLES[page], page, stub_body(PAGE_TITLES[page], page))
 
 

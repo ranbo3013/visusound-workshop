@@ -396,3 +396,94 @@ td .row-actions { display: flex; gap: 8px; }
 .toast-amber .toast-dot { background: var(--accent-amber); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @keyframes toastOut { to { opacity: 0; transform: translateY(10px); } }
+
+/* ============================ AI 助手首页（浅色独立风格） ============================ */
+.assistant-body { background: #f5f5f7; color: #111827; --a-muted:#6b7280; --a-border:#e5e7eb; --a-green:#22c55e; }
+.assistant-page { display: flex; min-height: 100vh; font-family: Inter, "PingFang SC", -apple-system, BlinkMacSystemFont, sans-serif; }
+
+/* 窄侧边栏 */
+.assistant-sidebar { width: 72px; background: #fff; border-right: 1px solid #f0f0f2; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 16px 0; flex-shrink: 0; }
+.assistant-sidebar-top, .assistant-sidebar-bottom { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.assistant-logo { width: 36px; height: 36px; border-radius: 10px; background: #111827; color: #fff; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+.assistant-logo svg { width: 18px; height: 18px; }
+.assistant-nav-item { width: 52px; height: 52px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #6b7280; text-decoration: none; transition: all .2s ease; }
+.assistant-nav-item:hover { background: #f3f4f6; color: #111827; }
+.assistant-nav-item.active { background: #111827; color: #fff; }
+.assistant-nav-item svg { width: 18px; height: 18px; }
+.assistant-nav-item span { font-size: 10px; font-weight: 500; }
+
+/* 主区域 */
+.assistant-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.assistant-header { height: 56px; display: flex; align-items: center; justify-content: flex-end; padding: 0 24px; gap: 16px; }
+.assistant-header-right { display: flex; align-items: center; gap: 16px; }
+.assistant-points { display: flex; align-items: center; gap: 6px; padding: 5px 12px; background: #fff; border-radius: 999px; font-size: 12px; font-weight: 500; color: #374151; border: 1px solid #f0f0f2; }
+.assistant-points svg { color: #9ca3af; }
+.assistant-back { font-size: 13px; color: #6b7280; text-decoration: none; display: flex; align-items: center; gap: 4px; }
+.assistant-back span { color: #9ca3af; }
+.assistant-back:hover { color: #111827; }
+.assistant-user { width: 32px; height: 32px; border-radius: 50%; background: #e5e7eb; color: #6b7280; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; cursor: default; }
+
+/* 内容区 */
+.assistant-content { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 40px 24px 80px; overflow-y: auto; }
+.assistant-hero { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+.assistant-avatar { width: 64px; height: 64px; border-radius: 20px; overflow: hidden; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.04); }
+.assistant-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.assistant-greeting h1 { font-size: 28px; font-weight: 700; color: #111827; display: flex; align-items: center; gap: 8px; line-height: 1.2; }
+.assistant-greeting p { font-size: 16px; color: #6b7280; margin-top: 4px; }
+.assistant-moon { font-size: 22px; line-height: 1; }
+
+/* 快捷标签 */
+.assistant-tags { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.assistant-tag { height: 32px; padding: 0 14px; border-radius: 999px; border: none; background: #fff; color: #374151; font-size: 13px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all .2s ease; }
+.assistant-tag:hover { background: #f3f4f6; }
+.assistant-tag-active { background: #111827; color: #fff; }
+.assistant-tag-active svg { color: #fff; }
+.assistant-tag svg { width: 14px; height: 14px; }
+
+/* 输入卡片 */
+.assistant-input-card { width: 100%; max-width: 720px; background: #fff; border-radius: 24px; padding: 20px 24px 16px; box-shadow: 0 4px 30px rgba(0,0,0,.04); display: flex; flex-direction: column; gap: 16px; }
+.assistant-input { width: 100%; border: none; outline: none; resize: none; font-size: 17px; line-height: 1.6; color: #111827; background: transparent; font-family: inherit; }
+.assistant-input::placeholder { color: #9ca3af; }
+.assistant-input-foot { display: flex; align-items: center; justify-content: space-between; }
+.assistant-input-left, .assistant-input-right { display: flex; align-items: center; gap: 12px; }
+.assistant-icon-btn { width: 28px; height: 28px; border-radius: 50%; border: none; background: #f3f4f6; color: #374151; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; line-height: 1; transition: background .2s ease; }
+.assistant-icon-btn:hover { background: #e5e7eb; }
+.assistant-pill-btn { height: 28px; padding: 0 12px; border-radius: 999px; border: none; background: #f3f4f6; color: #6b7280; font-size: 12px; font-weight: 400; display: flex; align-items: center; gap: 6px; cursor: pointer; transition: background .2s ease; }
+.assistant-pill-btn:hover { background: #e5e7eb; }
+.assistant-pill-btn svg { flex-shrink: 0; }
+
+/* 热门玩法 */
+.assistant-popular { width: 100%; max-width: 720px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.assistant-section-title { font-size: 14px; font-weight: 500; color: #6b7280; }
+.assistant-cards { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.assistant-card { background: #fff; border-radius: 20px; padding: 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 2px 16px rgba(0,0,0,.03); transition: transform .2s ease, box-shadow .2s ease; }
+.assistant-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.06); }
+.assistant-card-head { display: flex; align-items: center; gap: 8px; }
+.assistant-card-icon { width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.assistant-card-title { font-size: 14px; font-weight: 600; color: #111827; line-height: 1.3; }
+.assistant-card-desc { font-size: 12px; color: #6b7280; line-height: 1.6; flex: 1; }
+.assistant-card-btn { height: 28px; padding: 0 14px; border-radius: 999px; border: 1px solid #e5e7eb; background: #fff; color: #374151; font-size: 12px; font-weight: 500; cursor: pointer; width: fit-content; transition: all .2s ease; }
+.assistant-card-btn:hover { border-color: #d1d5db; background: #f9fafb; }
+.assistant-card-btn-primary { background: #111827; color: #fff; border-color: #111827; }
+.assistant-card-btn-primary:hover { background: #374151; border-color: #374151; }
+
+/* 技能市场 */
+.assistant-skill-market { width: 100%; max-width: 400px; background: #fff; border-radius: 999px; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; box-shadow: 0 2px 16px rgba(0,0,0,.03); }
+.assistant-skill-left { display: flex; align-items: center; gap: 10px; }
+.assistant-skill-icon { width: 22px; height: 22px; border-radius: 6px; background: #f3f4f6; color: #6b7280; display: flex; align-items: center; justify-content: center; }
+.assistant-skill-title { font-size: 13px; font-weight: 600; color: #111827; }
+.assistant-skill-sub { font-size: 11px; color: #9ca3af; }
+.assistant-skill-link { font-size: 12px; color: #6b7280; text-decoration: none; white-space: nowrap; }
+.assistant-skill-link span { color: #9ca3af; }
+.assistant-skill-link:hover { color: #111827; }
+
+/* 右下角 FAB */
+.assistant-fab { position: fixed; right: 28px; bottom: 28px; height: 36px; padding: 0 16px; border-radius: 999px; border: none; background: #111827; color: #fff; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 6px; cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.15); transition: transform .2s ease; }
+.assistant-fab:hover { transform: translateY(-2px); }
+
+/* 响应式 */
+@media (max-width: 860px) {
+  .assistant-cards { grid-template-columns: 1fr; }
+  .assistant-sidebar { display: none; }
+  .assistant-content { padding-top: 24px; }
+}
