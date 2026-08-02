@@ -1381,8 +1381,9 @@ def _nav_html(active: str) -> str:
 
 
 def page_shell(title: str, active: str, body: str) -> str:
+    theme = (db.get_setting('theme') or 'dark')
     return f'''<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="{theme}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1390,6 +1391,7 @@ def page_shell(title: str, active: str, body: str) -> str:
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
+<script>try{{var t=localStorage.getItem('vs-theme');if(t)document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}</script>
 </head>
 <body>
 <div class="app-shell">
@@ -1469,7 +1471,7 @@ def dashboard_body() -> str:
         <div class="stat-value">23.4<small style="font-size:14px;color:var(--text-muted)"> GB</small></div>
         <div class="stat-sub">共 100 GB 可用</div>
       </div>
-      <div class="card stat-card" style="border-color:rgba(0,212,170,.35);background:linear-gradient(135deg,rgba(0,212,170,.08),transparent)">
+      <div class="card stat-card" style="border-color:var(--accent-tint-border);background:linear-gradient(135deg,var(--accent-tint-bg),transparent)">
         <div class="stat-top"><span class="stat-label">视频本地化流水线</span></div>
         <div class="stat-sub" style="margin-top:8px">一键提取字幕 → 翻译 → AI 配音 → 替换音轨</div>
         <button class="btn btn-primary mt-12" onclick="document.getElementById('pipelineConsole').scrollIntoView({behavior:'smooth'})">启动流水线</button>
@@ -1947,6 +1949,13 @@ def settings_body() -> str:
       <div class="card">
         <div class="section-head"><span class="section-title">偏好</span></div>
         <div style="margin-bottom:16px">
+          <label class="field-label">界面主题</label>
+          <div class="row row-wrap" id="themeGroup" style="gap:8px">
+            <button class="emotion-btn active" data-theme="dark">深色 · 青绿</button>
+            <button class="emotion-btn" data-theme="light">浅色 · 橙色</button>
+          </div>
+        </div>
+        <div style="margin-bottom:16px">
           <label class="field-label">默认字幕语言</label>
           <select class="select" id="prefLang">
             <option value="zh,en">中文 + 英文</option>
@@ -1971,6 +1980,28 @@ def settings_body() -> str:
     <script>
     (function(){
       const $=id=>document.getElementById(id);
+      let curTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      function markTheme(t){
+        document.querySelectorAll('#themeGroup .emotion-btn').forEach(b=>{
+          b.classList.toggle('active', b.dataset.theme===t);
+        });
+      }
+      function applyTheme(t, persist){
+        curTheme = t;
+        document.documentElement.setAttribute('data-theme', t);
+        try { localStorage.setItem('vs-theme', t); } catch(e){}
+        markTheme(t);
+        if(persist){
+          fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({theme:t})}).catch(()=>{});
+        }
+      }
+      $('themeGroup').addEventListener('click', e=>{
+        const b = e.target.closest('.emotion-btn'); if(!b) return;
+        if(b.dataset.theme===curTheme) return;
+        applyTheme(b.dataset.theme, true);
+        showToast('已切换到'+(b.dataset.theme==='light'?'浅色 · 橙色':'深色 · 青绿')+'主题','success');
+      });
       async function load(){
         const s=await (await fetch('/api/comment/status')).json();
         $('llmStatus').innerHTML = s.configured
@@ -1983,10 +2014,11 @@ def settings_body() -> str:
         const set=await (await fetch('/api/settings')).json();
         if(set.default_lang) $('prefLang').value=set.default_lang;
         if(set.default_model) $('prefModel').value=set.default_model;
+        if(set.theme) applyTheme(set.theme, false); else markTheme(curTheme);
       }
       $('saveBtn').addEventListener('click',async()=>{
         await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({default_lang:$('prefLang').value,default_model:$('prefModel').value})});
+          body:JSON.stringify({default_lang:$('prefLang').value,default_model:$('prefModel').value,theme:curTheme})});
         $('saveHint').textContent='已保存 ✓'; setTimeout(()=>$('saveHint').textContent='',1500); load();
         showToast('偏好设置已保存','success');
       });
@@ -2062,7 +2094,7 @@ def tts_body() -> str:
         vs.forEach((v,i)=>{
           const d=document.createElement('div'); d.className='voice-card'+(curVoice===v.id?' active':''); d.dataset.id=v.id;
           const c=colors[i%colors.length];
-          d.innerHTML='<div class="voice-avatar" style="background:linear-gradient(135deg,'+c+',#1a1a34)">'+v.name[0]+'</div>'
+          d.innerHTML='<div class="voice-avatar" style="background:linear-gradient(135deg,'+c+',var(--bg-elevated))">'+v.name[0]+'</div>'
             +'<div class="voice-name">'+escapeHtml(v.name)+'</div>'
             +'<div class="voice-meta">'+escapeHtml(v.gender||'')+'</div>'
             +'<div class="voice-tags"><span class="tag tag-gray">'+escapeHtml((v.tags||'').split(',')[0]||'')+'</span></div>';
@@ -2117,7 +2149,7 @@ def sound_library_body() -> str:
           const d=document.createElement('div'); d.className='voice-card';
           const c=colors[i%colors.length];
           const kind = v.provider==='clone-mock' ? '克隆' : '预置';
-          d.innerHTML='<div class="voice-avatar" style="background:linear-gradient(135deg,'+c+',#1a1a34)">'+v.name[0]+'</div>'
+          d.innerHTML='<div class="voice-avatar" style="background:linear-gradient(135deg,'+c+',var(--bg-elevated))">'+v.name[0]+'</div>'
             +'<div class="voice-name">'+escapeHtml(v.name)+'</div>'
             +'<div class="voice-meta">'+escapeHtml(v.gender||'')+' · '+kind+'</div>'
             +'<div class="voice-tags"><span class="tag tag-gray">'+escapeHtml((v.tags||'').split(',')[0]||'音色')+'</span></div>';
@@ -2230,7 +2262,7 @@ def voice_clone_body() -> str:
       let srcPicked=null;
       $('srcDrop').addEventListener('click',()=>$('srcFile').click());
       $('srcFile').addEventListener('change',e=>{srcPicked=e.target.files[0]||null;$('srcName').textContent=srcPicked?('已选择：'+srcPicked.name):'';});
-      function drawWave(){const c=$('wave');const ctx=c.getContext('2d');const w=c.width=c.clientWidth||600;const h=c.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#00d4aa';
+      function drawWave(){const c=$('wave');const ctx=c.getContext('2d');const w=c.width=c.clientWidth||600;const h=c.height;ctx.clearRect(0,0,w,h);ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()||'#00d4aa';
         for(let i=0;i<w;i+=3){const amp=(Math.sin(i*0.05)*0.4+Math.random()*0.6)*h*0.42;ctx.fillRect(i,h/2-amp,2,amp*2);}}
       $('next1').addEventListener('click',()=>{
         const url=$('srcUrl').value.trim();
