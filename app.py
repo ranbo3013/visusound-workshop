@@ -31,6 +31,7 @@ from src.models import SourceType, SubtitleFormat
 from src.source import classify_source, guess_output_filename
 from src.formatter import parse_srt_to_text, merge_bilingual, format_to_string
 from src import db
+from src import tts
 
 # ---------------------------------------------------------------------------
 # 加载 .env（零依赖实现，避免引入 python-dotenv）
@@ -58,6 +59,8 @@ _load_dotenv()
 
 # 初始化本地 SQLite 数据层（projects / tasks / settings / voices）
 db.init_db()
+# 预置 Mock 音色库（正式 TTS 引擎接入前用于跑通 UI）
+tts.ensure_voices()
 
 app = FastAPI(title="VisuSound Workshop")
 
@@ -1154,6 +1157,75 @@ async def api_tasks(limit: int = 50):
 
 
 # ---------------------------------------------------------------------------
+# API: AI 配音 / 批量配音 / 声音库 / 声音克隆（阶段 3 · Mock 引擎）
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tts/voices")
+async def api_tts_voices():
+    """返回可用音色列表（Mock 预置 + 用户克隆）。"""
+    return db.list_voices()
+
+
+@app.post("/api/tts/generate")
+async def api_tts_generate(req: Request):
+    """生成单条配音（Mock 占位）。真实引擎接入后改调 TTS API。"""
+    data = await req.json()
+    text = (data.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "text required"}, status_code=400)
+    try:
+        rate = float(data.get("rate", 1.0))
+        pitch = int(data.get("pitch", 0))
+        volume = int(data.get("volume", 0))
+    except (ValueError, TypeError):
+        rate, pitch, volume = 1.0, 0, 0
+    res = tts.generate_mock_audio(
+        text,
+        voice_id=data.get("voice_id", "warm_f"),
+        emotion=data.get("emotion", "中性"),
+        rate=rate,
+        pitch=pitch,
+        volume=volume,
+    )
+    return {"success": True, "mode": "mock", **res}
+
+
+@app.post("/api/tts/batch")
+async def api_tts_batch(req: Request):
+    """批量配音：逐条生成，返回音频列表。"""
+    data = await req.json()
+    items = data.get("items") or []
+    if not items:
+        return JSONResponse({"error": "items required"}, status_code=400)
+    results = []
+    for it in items[:20]:  # 上限保护
+        t = (it.get("text") or "").strip()
+        if not t:
+            continue
+        res = tts.generate_mock_audio(
+            t,
+            voice_id=it.get("voice_id", "warm_f"),
+            emotion=it.get("emotion", "中性"),
+        )
+        # 回写原始上下文，便于前端展示与后续真实引擎对齐
+        res["text"] = t
+        res["role"] = it.get("role", "")
+        results.append(res)
+    return {"success": True, "mode": "mock", "count": len(results), "items": results}
+
+
+@app.post("/api/tts/clone")
+async def api_tts_clone(req: Request):
+    """声音克隆（Mock 占位）。真实引擎接入后改训/推声音模型。"""
+    data = await req.json()
+    name = (data.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    res = tts.clone_mock_voice(name, data.get("source", ""), data.get("segment", ""))
+    return {"success": True, "mode": "mock", **res}
+
+
+# ---------------------------------------------------------------------------
 # Web UI — 声画工坊 媒资工作台外壳（220px 宽栏 + 顶栏 + 状态栏）
 # ---------------------------------------------------------------------------
 
@@ -1670,6 +1742,251 @@ def settings_body() -> str:
     '''
 
 
+def tts_body() -> str:
+    return '''
+    <div class="page-head"><h1>AI 配音</h1><p>文本转语音 · 多情绪、多参数控制 · Mock 引擎</p></div>
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="section-head"><span class="section-title">文本输入</span></div>
+        <textarea class="input" id="ttsText" rows="7" placeholder="输入要合成的文案…">今天和大家聊聊如何高效阅读一本书，先速读抓骨架，再精读做笔记。</textarea>
+        <div class="slider-row"><span class="slider-label">语速</span><input type="range" id="rate" min="0.5" max="2" step="0.1" value="1"><span class="slider-val" id="rateVal">1.0x</span></div>
+        <div class="slider-row"><span class="slider-label">音调</span><input type="range" id="pitch" min="-12" max="12" step="1" value="0"><span class="slider-val" id="pitchVal">0</span></div>
+        <div class="slider-row"><span class="slider-label">音量</span><input type="range" id="volume" min="-20" max="20" step="1" value="0"><span class="slider-val" id="volumeVal">0</span></div>
+        <div style="margin-top:10px"><label class="field-label">情绪</label>
+          <div class="row row-wrap" id="emotionGroup" style="gap:8px">
+            <button class="emotion-btn active" data-em="中性">中性</button>
+            <button class="emotion-btn" data-em="开心">开心</button>
+            <button class="emotion-btn" data-em="悲伤">悲伤</button>
+            <button class="emotion-btn" data-em="愤怒">愤怒</button>
+            <button class="emotion-btn" data-em="严肃">严肃</button>
+            <button class="emotion-btn" data-em="温柔">温柔</button>
+          </div>
+        </div>
+        <button class="btn btn-primary mt-16" id="genBtn" style="width:100%">生成配音</button>
+        <div class="notice notice-amber" style="margin-top:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>当前为 Mock 引擎：生成占位音频，时长按字数估算。接入真实 TTS 后此处输出真实人声。</span></div>
+      </div>
+      <div class="card">
+        <div class="section-head"><span class="section-title">选择声音</span><span class="tag" id="voiceCount" style="margin-left:auto">0</span></div>
+        <div class="grid grid-3" id="voiceGrid"></div>
+        <div class="section-head mt-24"><span class="section-title">预览</span></div>
+        <audio id="player" controls style="width:100%"></audio>
+        <div class="row" style="gap:10px;margin-top:10px">
+          <a class="btn btn-secondary btn-sm" id="dlBtn" target="_blank">下载音频</a>
+          <span class="muted" id="genMeta"></span>
+        </div>
+      </div>
+    </div>
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      let curVoice=null, curEm='中性';
+      document.querySelectorAll('#emotionGroup .emotion-btn').forEach(b=>b.addEventListener('click',()=>{
+        document.querySelectorAll('#emotionGroup .emotion-btn').forEach(x=>x.classList.remove('active'));
+        b.classList.add('active'); curEm=b.dataset.em;
+      }));
+      async function loadVoices(){
+        const vs=await (await fetch('/api/tts/voices')).json();
+        $('voiceCount').textContent=vs.length;
+        const g=$('voiceGrid'); g.innerHTML='';
+        const colors=['#00d4aa','#7c5cfc','#f59e0b','#ef4444','#22c55e','#4f9bff'];
+        vs.forEach((v,i)=>{
+          const d=document.createElement('div'); d.className='voice-card'+(curVoice===v.id?' active':''); d.dataset.id=v.id;
+          const c=colors[i%colors.length];
+          d.innerHTML='<div class="voice-avatar" style="background:linear-gradient(135deg,'+c+',#1a1a34)">'+v.name[0]+'</div>'
+            +'<div class="voice-name">'+escapeHtml(v.name)+'</div>'
+            +'<div class="voice-meta">'+escapeHtml(v.gender||'')+'</div>'
+            +'<div class="voice-tags"><span class="tag tag-gray">'+escapeHtml((v.tags||'').split(',')[0]||'')+'</span></div>';
+          d.addEventListener('click',()=>{curVoice=v.id;document.querySelectorAll('.voice-card').forEach(x=>x.classList.remove('active'));d.classList.add('active');});
+          g.appendChild(d);
+        });
+        if(!curVoice && vs.length) curVoice=vs[0].id;
+      }
+      $('rate').addEventListener('input',e=>$('rateVal').textContent=parseFloat(e.target.value).toFixed(1)+'x');
+      $('pitch').addEventListener('input',e=>$('pitchVal').textContent=e.target.value);
+      $('volume').addEventListener('input',e=>$('volumeVal').textContent=e.target.value);
+      $('genBtn').addEventListener('click',async()=>{
+        const text=$('ttsText').value.trim();
+        if(!text){alert('请输入文案');return;}
+        if(!curVoice){alert('请选择声音');return;}
+        $('genBtn').textContent='生成中…';$('genBtn').disabled=true;
+        try{
+          const r=await fetch('/api/tts/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({text,voice_id:curVoice,emotion:curEm,rate:parseFloat($('rate').value),pitch:parseInt($('pitch').value),volume:parseInt($('volume').value)})});
+          const d=await r.json();
+          if(d.error){alert(d.error);return;}
+          $('player').src='/api/download/'+encodeURIComponent(d.filename);
+          $('dlBtn').href='/api/download/'+encodeURIComponent(d.filename);
+          $('genMeta').textContent='时长 '+d.duration+'s · '+escapeHtml(d.emotion);
+        }catch(err){alert('生成失败：'+err);}
+        finally{$('genBtn').textContent='生成配音';$('genBtn').disabled=false;}
+      });
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+      loadVoices();
+    })();
+    </script>
+    '''
+
+
+def sound_library_body() -> str:
+    return '''
+    <div class="page-head"><h1>声音库</h1><p>管理你的音色 · 预置音色 + 克隆音色</p></div>
+    <div class="card">
+      <div class="section-head"><span class="section-title">全部音色</span><span class="tag" id="voiceCount" style="margin-left:auto">0</span></div>
+      <div class="grid grid-3" id="voiceGrid"></div>
+    </div>
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      async function load(){
+        const vs=await (await fetch('/api/tts/voices')).json();
+        $('voiceCount').textContent=vs.length;
+        const g=$('voiceGrid'); g.innerHTML='';
+        const colors=['#00d4aa','#7c5cfc','#f59e0b','#ef4444','#22c55e','#4f9bff'];
+        vs.forEach((v,i)=>{
+          const d=document.createElement('div'); d.className='voice-card';
+          const c=colors[i%colors.length];
+          const kind = v.provider==='clone-mock' ? '克隆' : '预置';
+          d.innerHTML='<div class="voice-avatar" style="background:linear-gradient(135deg,'+c+',#1a1a34)">'+v.name[0]+'</div>'
+            +'<div class="voice-name">'+escapeHtml(v.name)+'</div>'
+            +'<div class="voice-meta">'+escapeHtml(v.gender||'')+' · '+kind+'</div>'
+            +'<div class="voice-tags"><span class="tag tag-gray">'+escapeHtml((v.tags||'').split(',')[0]||'音色')+'</span></div>';
+          g.appendChild(d);
+        });
+      }
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+      load();
+    })();
+    </script>
+    '''
+
+
+def batch_body() -> str:
+    return '''
+    <div class="page-head"><h1>多人批量配音</h1><p>多角色分镜批量合成 · 每行一段，支持「角色名:文本」</p></div>
+    <div class="card">
+      <div class="section-head"><span class="section-title">批量文案</span><span class="tag" id="voiceCount" style="margin-left:auto"></span></div>
+      <textarea class="input" id="batchText" rows="10" placeholder="男主:今天我们来聊聊这个项目。\n女主:听起来很有意思呢。\n旁白:这是一段演示文案。"></textarea>
+      <div class="notice notice-amber" style="margin-top:10px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>行首「角色名:」会自动匹配声音库中的同名音色；无匹配则用默认音色。Mock 阶段逐条生成占位音频。</span></div>
+      <div class="row" style="gap:10px;margin-top:14px"><button class="btn btn-primary" id="batchBtn" style="margin-left:auto">批量生成配音</button></div>
+    </div>
+    <div class="card mt-24" id="resultCard" style="display:none">
+      <div class="section-head"><span class="section-title">生成结果</span><span class="muted" id="batchMeta" style="margin-left:auto"></span></div>
+      <div class="grid grid-2 mt-16" id="batchList"></div>
+    </div>
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      async function loadVoices(){const vs=await (await fetch('/api/tts/voices')).json();$('voiceCount').textContent=vs.length+' 个音色可用';window.__voices=vs;}
+      $('batchBtn').addEventListener('click',async()=>{
+        const raw=$('batchText').value.trim();
+        if(!raw){alert('请输入文案');return;}
+        const vs=window.__voices||[];
+        const items=raw.split(/\\n/).map(l=>l.trim()).filter(Boolean).map(line=>{
+          let voice_id='warm_f', role='默认';
+          const m=line.match(/^([^:：]+)[:：](.*)$/);
+          if(m){role=m[1].trim();const txt=m[2].trim();const hit=vs.find(v=>v.name.indexOf(role)>=0);if(hit)voice_id=JSON.parse(hit.meta||'{}').voice_id||'warm_f';return {text:txt,voice_id,role};}
+          return {text:line,voice_id,role};
+        });
+        $('batchBtn').textContent='生成中…';$('batchBtn').disabled=true;
+        try{
+          const r=await fetch('/api/tts/batch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+          const d=await r.json();
+          $('resultCard').style.display='';$('batchMeta').textContent='共 '+d.count+' 条';
+          const list=$('batchList');list.innerHTML='';
+          d.items.forEach(it=>{
+            const div=document.createElement('div');div.className='card';
+            const role=it.role?('<span class="tag tag-purple" style="margin-right:6px">'+escapeHtml(it.role)+'</span>'):'';
+            div.innerHTML='<div class="row" style="justify-content:space-between;margin-bottom:8px">'+role+'<span class="muted font-mono" style="font-size:12px">'+it.duration+'s</span></div>'
+              +(it.text?'<p class="muted" style="margin:0 0 8px;font-size:13px">'+escapeHtml(it.text)+'</p>':'')
+              +'<audio controls src="/api/download/'+encodeURIComponent(it.filename)+'" style="width:100%"></audio>';
+            list.appendChild(div);
+          });
+        }catch(err){alert('批量生成失败：'+err);}
+        finally{$('batchBtn').textContent='批量生成配音';$('batchBtn').disabled=false;}
+      });
+      function escapeHtml(s){return String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));}
+      loadVoices();
+    })();
+    </script>
+    '''
+
+
+def voice_clone_body() -> str:
+    return '''
+    <div class="page-head"><h1>声音克隆</h1><p>上传人声片段 → 克隆专属音色 · 内置合规授权提醒</p></div>
+    <div class="card">
+      <div class="section-head"><span class="section-title">第 1 步 · 输入视频/音频来源</span></div>
+      <div class="upload-zone" id="srcDrop">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <div>拖拽音频/视频到此处，或 <span style="color:var(--accent)">点击选择</span></div>
+        <div class="muted" style="font-size:12px;margin-top:6px" id="srcName"></div>
+        <input type="file" id="srcFile" accept="audio/*,video/*" hidden />
+      </div>
+      <div style="margin-top:12px"><label class="field-label">或粘贴链接（抖音 / 小红书 / B站 / YouTube）</label><input class="input" id="srcUrl" placeholder="https://..." /></div>
+      <div class="notice notice-amber" style="margin-top:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><span>请确认你拥有该声音的使用授权，避免侵权风险（《互联网信息服务深度合成管理规定》）。</span></div>
+      <button class="btn btn-primary mt-16" id="next1">下一步</button>
+    </div>
+
+    <div class="card mt-24" id="step2" style="display:none">
+      <div class="section-head"><span class="section-title">第 2 步 · 选择人声片段</span></div>
+      <canvas id="wave" height="120" style="width:100%;background:var(--bg-elevated);border-radius:var(--r-md)"></canvas>
+      <div class="row" style="gap:18px;margin-top:14px">
+        <div style="flex:1"><label class="field-label">起始</label><input type="range" id="segStart" min="0" max="100" value="10"></div>
+        <div style="flex:1"><label class="field-label">结束</label><input type="range" id="segEnd" min="0" max="100" value="80"></div>
+      </div>
+      <div class="row" style="gap:10px;margin-top:14px">
+        <button class="btn btn-secondary" id="back2">上一步</button>
+        <button class="btn btn-primary" id="next2" style="margin-left:auto">克隆音色</button>
+      </div>
+    </div>
+
+    <div class="card mt-24" id="step3" style="display:none">
+      <div class="section-head"><span class="section-title">第 3 步 · 命名并保存</span></div>
+      <label class="field-label">音色名称</label><input class="input" id="cloneName" placeholder="如：我的专属音色" />
+      <div class="row" style="gap:10px;margin-top:14px">
+        <button class="btn btn-secondary" id="back3">上一步</button>
+        <button class="btn btn-primary" id="saveClone" style="margin-left:auto">完成克隆</button>
+      </div>
+    </div>
+
+    <div class="card mt-24" id="done" style="display:none">
+      <div class="notice notice-accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span id="doneMsg">克隆完成（Mock）：音色已保存到声音库。</span></div>
+    </div>
+
+    <script>
+    (function(){
+      const $=id=>document.getElementById(id);
+      let srcPicked=null;
+      $('srcDrop').addEventListener('click',()=>$('srcFile').click());
+      $('srcFile').addEventListener('change',e=>{srcPicked=e.target.files[0]||null;$('srcName').textContent=srcPicked?('已选择：'+srcPicked.name):'';});
+      function drawWave(){const c=$('wave');const ctx=c.getContext('2d');const w=c.width=c.clientWidth||600;const h=c.height;ctx.clearRect(0,0,w,h);ctx.fillStyle='#00d4aa';
+        for(let i=0;i<w;i+=3){const amp=(Math.sin(i*0.05)*0.4+Math.random()*0.6)*h*0.42;ctx.fillRect(i,h/2-amp,2,amp*2);}}
+      $('next1').addEventListener('click',()=>{
+        const url=$('srcUrl').value.trim();
+        if(!srcPicked && !url){alert('请选择文件或粘贴链接');return;}
+        $('step2').style.display='';drawWave();window.scrollTo(0,$('step2').offsetTop-80);
+      });
+      $('back2').addEventListener('click',()=>{$('step2').style.display='none';});
+      $('next2').addEventListener('click',()=>{$('step3').style.display='';window.scrollTo(0,$('step3').offsetTop-80);});
+      $('back3').addEventListener('click',()=>{$('step3').style.display='none';});
+      $('saveClone').addEventListener('click',async()=>{
+        const name=$('cloneName').value.trim();
+        if(!name){alert('请填写音色名称');return;}
+        const url=$('srcUrl').value.trim();
+        try{
+          const r=await fetch('/api/tts/clone',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({name,source:srcPicked?srcPicked.name:url,segment:$('segStart').value+'%-'+$('segEnd').value+'%'})});
+          const d=await r.json();
+          if(d.error){alert(d.error);return;}
+          $('done').style.display='';$('doneMsg').textContent='克隆完成（Mock）：「'+name+'」已保存到声音库。';
+          window.scrollTo(0,$('done').offsetTop-80);
+        }catch(err){alert('克隆失败：'+err);}
+      });
+    })();
+    </script>
+    '''
+
+
 def stub_body(title: str, page: str) -> str:
     return f'''
     <div class="page-head"><h1>{title}</h1><p>该模块将在后续开发阶段实现。</p></div>
@@ -1985,6 +2302,14 @@ async def app_page(page: str):
         return page_shell("项目管理", "projects", projects_body())
     if page == "settings":
         return page_shell("设置", "settings", settings_body())
+    if page == "dubbing":
+        return page_shell("AI 配音", "dubbing", tts_body())
+    if page == "batch-dubbing":
+        return page_shell("多人批量配音", "batch-dubbing", batch_body())
+    if page == "sound-library":
+        return page_shell("声音库", "sound-library", sound_library_body())
+    if page == "voice-clone":
+        return page_shell("声音克隆", "voice-clone", voice_clone_body())
     return page_shell(PAGE_TITLES[page], page, stub_body(PAGE_TITLES[page], page))
 
 
