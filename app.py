@@ -437,6 +437,31 @@ async def api_ocr(
 # API: Transcribe — speech-to-text via Whisper
 # ---------------------------------------------------------------------------
 
+def _audio_level(audio_path: str) -> dict:
+    """Compute peak/RMS of a WAV file and whether it looks silent (near-zero)."""
+    try:
+        import wave
+        import numpy as np
+        w = wave.open(audio_path, "rb")
+        n = w.getnframes()
+        data = w.readframes(min(n, 200000))  # sample first ~4s @48k
+        w.close()
+        if not data:
+            return {"peak": 0, "rms": 0.0, "level": 0.0, "is_silent": True}
+        arr = np.frombuffer(data, dtype="<i2").astype(np.float32)
+        peak = float(np.max(np.abs(arr))) if arr.size else 0.0
+        rms = float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.0
+        return {
+            "peak": int(peak),
+            "rms": round(rms, 1),
+            "level": round(min(1.0, rms / 4000.0), 3),
+            # int16 full scale is 32767; <300 ≈ near-silent noise floor
+            "is_silent": peak < 300,
+        }
+    except Exception as e:
+        return {"peak": 0, "rms": 0.0, "level": 0.0, "is_silent": False, "error": str(e)}
+
+
 def _transcribe_with_whisper(audio_path: str, language: str = "auto",
                              model_size: str = "small", cleanup_source: bool = False):
     """Run Whisper on an existing audio file and return a JSONResponse with text.
@@ -494,12 +519,16 @@ def _transcribe_with_whisper(audio_path: str, language: str = "auto",
         (UPLOAD_DIR / srt_name).write_text("\n".join(srt_lines), encoding="utf-8")
 
         detected_lang = result.get("language", language or "unknown")
+        level_info = _audio_level(audio_path)
         return JSONResponse({
             "success": True,
             "text": full_text,
             "language": detected_lang,
             "segments": len(segments),
             "files": {"txt": result_name, "srt": srt_name},
+            "is_silent": level_info["is_silent"],
+            "level": level_info["level"],
+            "peak": level_info["peak"],
         })
     except FileNotFoundError:
         return JSONResponse({"error": "ffmpeg not found. Install: brew install ffmpeg"}, status_code=500)
@@ -615,6 +644,7 @@ _recording_start: float | None = None
 _recording_path: str | None = None
 _recording_target_format: str | None = None
 _previous_output_device: str | None = None
+_recording_level: float = 0.0  # 0..1 normalized RMS, for live input meter
 _recording_lock = threading.Lock()
 
 
@@ -719,13 +749,16 @@ def _record_thread(sd_device_idx: int, out_path: str, sample_rate: int, channels
     import sounddevice as sd
     import numpy as np
     import wave
+    global _recording_level
 
     frames: list[np.ndarray] = []
+    last_chunk = [None]
 
     def callback(indata: np.ndarray, frame_count: int, time_info, status):
         if status:
             print(f"[RECORD] sounddevice status: {status}")
         frames.append(indata.copy())
+        last_chunk[0] = indata
 
     try:
         with sd.InputStream(
@@ -738,7 +771,13 @@ def _record_thread(sd_device_idx: int, out_path: str, sample_rate: int, channels
             latency="high",
         ):
             while _recording_stream is not None:
+                ch = last_chunk[0]
+                if ch is not None:
+                    rms = float(np.sqrt(np.mean(ch.astype(np.float32) ** 2)))
+                    _recording_level = min(1.0, rms / 4000.0)
                 sd.sleep(100)
+
+        _recording_level = 0.0
 
         # Write WAV file
         audio = np.concatenate(frames, axis=0)
@@ -897,6 +936,7 @@ async def record_status():
             "recording": True,
             "elapsed_seconds": round(elapsed, 1),
             "filename": Path(_recording_path).name if _recording_path else None,
+            "level": _recording_level,
         })
     return JSONResponse({"recording": False})
 
@@ -2658,7 +2698,8 @@ def comment_body() -> str:
           <button class="btn btn-danger btn-sm" id="stopBtn" style="display:none">⏹ 停止并转写</button>
           <span class="rec-indicator" id="recIndicator" style="display:none">
             <span class="rec-dot"></span><span id="recTime">00:00</span>
-            <span class="muted">· 正在录系统声音</span>
+            <span class="level-meter" id="levelMeter" title="实时输入电平：有跳动说明已收到系统声音"><span class="level-fill" id="levelFill"></span></span>
+            <span class="muted">· 录系统声音</span>
           </span>
           <span id="recHint" class="muted" style="font-size:12px">需 BlackHole：brew install blackhole-2ch</span>
         </div>
@@ -2753,8 +2794,11 @@ def comment_body() -> str:
             const s = await (await fetch('/api/record/status')).json().catch(()=>({recording:true}));
             const el = (Date.now() - recStartTs) / 1000;
             $('recTime').textContent = fmtRec(s.elapsed_seconds != null ? s.elapsed_seconds : el);
-          }, 500);
-          setTransNotice('notice-amber', '● 正在录制本机播放的声音，播放完想录的内容后点「停止并转写」。');
+            if (typeof s.level === 'number') {
+              $('levelFill').style.width = Math.round(s.level * 100) + '%';
+            }
+          }, 400);
+          setTransNotice('notice-amber', '● 正在录制本机播放的声音。请在播放器里点「播放」（切换输出设备后需重新点播放，声音才会进 BlackHole）。电平条跳动即表示已收到声音，录完点「停止并转写」。');
         } catch (err) {
           setTransNotice('notice-amber', '请求失败：' + err);
           $('recordBtn').disabled = false;
@@ -2772,7 +2816,11 @@ def comment_body() -> str:
           if (t.error) { setTransNotice('notice-amber', '解析失败：' + t.error); return; }
           $('rawText').value = t.text || '';
           $('videoUrl').value = '';
-          setTransNotice('notice-accent', '✅ 已识别 ' + (t.text ? t.text.length : 0) + ' 字口播文字（语言 ' + (t.language || 'auto') + '，' + (t.segments || 0) + ' 句）。请核对，有误可直接在上方修改，确认后点「分析文字内容」。');
+          if (t.is_silent) {
+            setTransNotice('notice-amber', '⚠️ 未检测到任何声音（0 字）。请确认：① 录制时本机正在播放声音；② 点开始后系统输出已切到 BlackHole（在「声音」设置里可见）；③ 部分播放器切换输出设备后需重新点「播放」，声音才会路由到 BlackHole。录到声音时上方电平条会跳动。');
+          } else {
+            setTransNotice('notice-accent', '✅ 已识别 ' + (t.text ? t.text.length : 0) + ' 字口播文字（语言 ' + (t.language || 'auto') + '，' + (t.segments || 0) + ' 句）。请核对，有误可直接在上方修改，确认后点「分析文字内容」。');
+          }
         } catch (err) {
           setTransNotice('notice-amber', '请求失败：' + err);
         } finally {

@@ -315,6 +315,8 @@ label.field-label { display: block; font-size: 12px; color: var(--text-secondary
 .rec-indicator { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 0 rgba(239,68,68,.6); animation: recPulse 1.2s infinite; }
 .rec-controls { min-height: 34px; }
+.level-meter { display:inline-block; width:96px; height:9px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border-light); overflow:hidden; vertical-align:middle; margin:0 2px; }
+.level-fill { display:block; height:100%; width:0%; background:linear-gradient(90deg, var(--accent), var(--amber)); transition:width .12s linear; }
 @keyframes recPulse {
   0% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); }
   70% { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
