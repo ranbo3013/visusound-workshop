@@ -1572,7 +1572,7 @@ def page_shell(title: str, active: str, body: str) -> str:
   </aside>
   <div class="main">
     <header class="topbar">
-      <div class="topbar-title">{title}<span class="badge">v2.0</span></div>
+      <div class="topbar-title">{title}</div>
       <div class="topbar-spacer"></div>
       <input class="topbar-search" placeholder="搜索项目、任务、声音…" />
       <div class="topbar-actions"><div class="avatar">磊</div></div>
@@ -2026,10 +2026,7 @@ def assistant_body() -> str:
 
 def subtitle_body() -> str:
     return '''
-    <div class="page-head">
-      <h1>字幕提取</h1>
-      <p>从本地文件或 9 大平台视频提取字幕 · 支持弹幕兜底与中英双语合并</p>
-    </div>
+    <p class="page-desc">从本地文件或 9 大平台视频提取字幕 · 支持弹幕兜底与中英双语合并</p>
 
     <div class="card">
       <div class="section-head"><span class="section-title">提取配置</span></div>

@@ -255,6 +255,7 @@ label.field-label { display: block; font-size: 12px; color: var(--text-secondary
 .page-head { margin-bottom: 26px; }
 .page-head h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; }
 .page-head p { color: var(--text-secondary); font-size: 13px; margin-top: 4px; }
+.page-desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 22px; }
 
 /* ============================ 统计卡 ============================ */
 .stat-card { padding: 18px 20px; }
