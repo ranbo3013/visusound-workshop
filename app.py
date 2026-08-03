@@ -1510,8 +1510,8 @@ _ICONS = {
 
 NAV_GROUPS = [
     [("dashboard", "仪表盘"), ("projects", "项目管理")],
-    [("subtitle", "字幕提取"), ("ocr", "图片识别"), ("transcribe", "语音转写"), ("record", "系统录音")],
-    [("dubbing", "AI 配音"), ("batch-dubbing", "多人批量配音"), ("sound-library", "声音库"), ("voice-clone", "声音克隆"), ("comment", "视频评论")],
+    [("subtitle", "字幕提取"), ("ocr", "图片识别"), ("transcribe", "语音转写"), ("record", "系统录音"), ("comment", "视频评论")],
+    [("dubbing", "AI 配音"), ("batch-dubbing", "多人批量配音"), ("sound-library", "声音库"), ("voice-clone", "声音克隆")],
     [("queue", "任务队列")],
 ]
 NAV_BOTTOM = [("settings", "设置")]
