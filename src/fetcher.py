@@ -20,6 +20,11 @@ import httpx
 from src.models import SourceType, VIDEO_EXTENSIONS
 from src.source import classify_source
 
+# 固定使用当前 Python 环境（.venv）中的 yt-dlp，而不是依赖系统 PATH 里版本
+# 不一致的 yt-dlp。抖音等平台的反爬更新极快，必须用最新版才能正常提取，
+# 之前曾因调用到 /opt/homebrew/bin/yt-dlp（较旧）导致抖音提取失败。
+YT_DLP_CMD = [sys.executable, "-m", "yt_dlp"]
+
 
 def fetch_remote_video(
     url: str,
@@ -135,15 +140,21 @@ def _fetch_via_ytdlp(
 
     outtmpl = str(dest_dir / "%(title).100s_%(id)s.%(ext)s")
 
-    cmd = [
-        "yt-dlp",
+    cmd = YT_DLP_CMD + [
+        # yt-dlp（由 YT_DLP_CMD 指定，使用 .venv 中最新的版本）
         "--no-playlist",
         "--force-overwrites",   # ensure subtitles are re-downloaded even if video exists
         "-o", outtmpl,
         "--no-warnings",
-        # Bilibili anti-bot bypass
-        "--add-header", "Referer:https://www.bilibili.com/",
-        "--add-header", "Origin:https://www.bilibili.com",
+    ]
+    # B 站反爬需要 Referer/Origin，但这类平台专用 header 不能无差别带给抖音等
+    # 平台——实测会导致抖音在下载视频流时报 "Fresh cookies needed"。仅对 B 站添加。
+    if "bilibili.com" in url:
+        cmd += [
+            "--add-header", "Referer:https://www.bilibili.com/",
+            "--add-header", "Origin:https://www.bilibili.com",
+        ]
+    cmd += [
         # Download all available subtitles (keep original format)
         "--write-subs",
         "--sub-langs", "all",
