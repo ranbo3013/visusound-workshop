@@ -18,8 +18,9 @@ from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Ensure project root is on path
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -36,6 +37,7 @@ from src import db
 from src import tts
 from src import llm
 from src import pipeline
+from src import auth
 
 # ---------------------------------------------------------------------------
 # 加载 .env（零依赖实现，避免引入 python-dotenv）
@@ -67,6 +69,35 @@ db.init_db()
 tts.ensure_voices()
 
 app = FastAPI(title="VisuSound Workshop")
+
+
+# ---------------------------------------------------------------------------
+# 强制门禁中间件
+# 公开路径：/ /login /register /api/auth/* /static /tools
+# 其余 /app/* 与 /api/* 未登录 → HTML 跳 /login，API 返 401
+# ---------------------------------------------------------------------------
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        public = ("/static", "/login", "/register", "/api/auth")
+        if path == "/" or path.startswith(public):
+            return await call_next(request)
+
+        session_id = request.cookies.get(auth.SESSION_COOKIE)
+        user = auth.get_session_user(session_id)
+        if user is None:
+            if path.startswith("/api/"):
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            from urllib.parse import quote
+            return RedirectResponse(f"/login?next={quote(path)}", status_code=302)
+
+        # 已登录：把用户挂到 request.state 供路由使用
+        request.state.user = user
+        return await call_next(request)
+
+
+app.add_middleware(AuthMiddleware)
 
 UPLOAD_DIR = PROJECT_ROOT / "static" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -1506,6 +1537,7 @@ _ICONS = {
     "queue": '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>',
     "comment": '<path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/>',
     "settings": '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/>',
+    "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>',
 }
 
 NAV_GROUPS = [
@@ -1521,11 +1553,11 @@ PAGE_TITLES = {
     "ocr": "图片识别", "transcribe": "语音转写", "record": "系统录音",
     "dubbing": "AI 配音", "batch-dubbing": "多人批量配音", "sound-library": "声音库",
     "voice-clone": "声音克隆", "comment": "视频评论", "queue": "任务队列", "settings": "设置",
-    "assistant": "AI 助手",
+    "assistant": "AI 助手", "users": "用户管理",
 }
 
 
-def _nav_html(active: str) -> str:
+def _nav_html(active: str, user: dict | None = None) -> str:
     out = ['<div class="sidebar-brand"><img src="/static/images/logo-icon.png" alt="声画工坊" class="sidebar-logo-img">'
            '<div><div class="sidebar-brand-name">声画工坊</div>'
            '<div class="sidebar-brand-sub">VisuSound</div></div></div>']
@@ -1538,6 +1570,14 @@ def _nav_html(active: str) -> str:
                 f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
                 f'stroke-linecap="round" stroke-linejoin="round">{_ICONS[key]}</svg>'
                 f'<span>{label}</span></a>')
+        out.append('<div class="sidebar-divider"></div>')
+    if user and user.get("role") == "admin":
+        act = " active" if active == "users" else ""
+        out.append(
+            f'<a class="nav-item{act}" href="/app/users">'
+            f'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            f'stroke-linecap="round" stroke-linejoin="round">{_ICONS["users"]}</svg>'
+            f'<span>用户管理</span></a>')
         out.append('<div class="sidebar-divider"></div>')
     out.append('</div>')
     out.append('<div class="sidebar-bottom">')
@@ -1552,8 +1592,42 @@ def _nav_html(active: str) -> str:
     return "\n".join(out)
 
 
-def page_shell(title: str, active: str, body: str) -> str:
+def page_shell(title: str, active: str, body: str, user: dict | None = None) -> str:
     theme = (db.get_setting('theme') or 'dark')
+    uname = (user.get("display_name") or user.get("username") or "磊哥") if user else "磊哥"
+    initial = (uname[0] if uname else "磊")
+    urole = "管理员" if (user and user.get("role") == "admin") else "普通用户"
+    user_menu = f'''
+      <div class="user-menu">
+        <button class="avatar" id="userMenuBtn" type="button" title="{uname}">{initial}</button>
+        <div class="user-dropdown" id="userDropdown">
+          <div class="user-dropdown-head">
+            <div class="user-name">{uname}</div>
+            <div class="user-role">{urole}</div>
+          </div>
+          <button class="user-dropdown-item" id="changePwdBtn" type="button">修改密码</button>
+          <a class="user-dropdown-item danger" href="/api/auth/logout">退出登录</a>
+        </div>
+      </div>'''
+    pwd_modal = '''
+    <div class="modal-mask" id="pwdModal" style="display:none">
+      <div class="modal">
+        <div class="modal-head"><span>修改密码</span><button class="modal-close" id="pwdClose" type="button">×</button></div>
+        <div class="modal-body">
+          <label class="field-label">当前密码</label>
+          <input class="input" id="pwdCurrent" type="password" placeholder="请输入当前密码" />
+          <label class="field-label mt-12">新密码</label>
+          <input class="input" id="pwdNew" type="password" placeholder="至少 6 位" />
+          <label class="field-label mt-12">确认新密码</label>
+          <input class="input" id="pwdConfirm" type="password" placeholder="再次输入新密码" />
+          <div class="muted mt-12" id="pwdMsg"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" id="pwdCancel" type="button">取消</button>
+          <button class="btn btn-primary" id="pwdSave" type="button">保存</button>
+        </div>
+      </div>
+    </div>'''
     return f'''<!DOCTYPE html>
 <html lang="zh-CN" data-theme="{theme}">
 <head>
@@ -1571,14 +1645,14 @@ def page_shell(title: str, active: str, body: str) -> str:
 <body>
 <div class="app-shell">
   <aside class="sidebar">
-    {_nav_html(active)}
+    {_nav_html(active, user)}
   </aside>
   <div class="main">
     <header class="topbar">
       <div class="topbar-title">{title}</div>
       <div class="topbar-spacer"></div>
       <input class="topbar-search" placeholder="搜索项目、任务、声音…" />
-      <div class="topbar-actions"><div class="avatar">磊</div></div>
+      <div class="topbar-actions">{user_menu}</div>
     </header>
     <main class="content page-fade">
       {body}
@@ -1591,6 +1665,7 @@ def page_shell(title: str, active: str, body: str) -> str:
     </footer>
   </div>
 </div>
+{pwd_modal}
 ''' + _SHELL_SCRIPT
 
 
@@ -1617,8 +1692,113 @@ _SHELL_SCRIPT = '''
       if(p) p.textContent = 'Projects: ' + d.projects;
     }).catch(function(){});
   } catch(e){}
+
+  // 用户菜单开关
+  try {
+    var ub = document.getElementById('userMenuBtn');
+    var ud = document.getElementById('userDropdown');
+    if (ub && ud) {
+      ub.addEventListener('click', function(e){ e.stopPropagation(); ud.classList.toggle('open'); });
+      document.addEventListener('click', function(e){
+        if (ud.classList.contains('open') && !ud.contains(e.target)) ud.classList.remove('open');
+      });
+    }
+    // 修改密码弹窗
+    var pm = document.getElementById('pwdModal');
+    var openPwd = function(){ if(pm) pm.style.display='flex'; };
+    var closePwd = function(){ if(pm){ pm.style.display='none'; var m=document.getElementById('pwdMsg'); if(m) m.textContent=''; } };
+    var cpb = document.getElementById('changePwdBtn');
+    if (cpb) cpb.addEventListener('click', function(){ if(ud) ud.classList.remove('open'); openPwd(); });
+    ['pwdClose','pwdCancel'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener('click', closePwd); });
+    if (pm) pm.addEventListener('click', function(e){ if(e.target===pm) closePwd(); });
+    var ps = document.getElementById('pwdSave');
+    if (ps) ps.addEventListener('click', function(){
+      var cur=document.getElementById('pwdCurrent').value;
+      var nv=document.getElementById('pwdNew').value;
+      var cf=document.getElementById('pwdConfirm').value;
+      var msg=document.getElementById('pwdMsg');
+      if(nv.length<6){ msg.textContent='新密码至少 6 位'; msg.style.color='#f59e0b'; return; }
+      if(nv!==cf){ msg.textContent='两次输入的新密码不一致'; msg.style.color='#f59e0b'; return; }
+      msg.textContent='保存中…'; msg.style.color='';
+      fetch('/api/users/me', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({current_password:cur, new_password:nv})})
+        .then(function(r){return r.json().then(function(d){return {ok:r.ok, d:d};});})
+        .then(function(o){
+          if(o.ok){ msg.textContent='密码已更新 ✓'; msg.style.color='#22c55e'; setTimeout(closePwd, 900); }
+          else { msg.textContent=o.d.error||'修改失败'; msg.style.color='#f59e0b'; }
+        }).catch(function(){ msg.textContent='网络错误'; });
+    });
+  } catch(e){}
 })();
 </script>
+</body>
+</html>'''
+
+
+# ---------------------------------------------------------------------------
+# 认证页外壳（登录 / 注册，独立于工作台侧栏）
+# ---------------------------------------------------------------------------
+
+def auth_shell(title: str, body: str) -> str:
+    return f'''<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} · 声画工坊</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+</head>
+<body class="auth-body">
+  <div class="auth-wrap">
+    <div class="auth-brand">
+      <img src="/static/images/logo-icon.png" alt="声画工坊" class="auth-logo">
+      <div class="auth-brand-name">声画工坊</div>
+      <div class="auth-brand-sub">VisuSound Workshop</div>
+    </div>
+    <div class="card auth-card">
+      <h1 class="auth-title">{title}</h1>
+      <div class="notice notice-amber" id="authError" style="display:none;margin-bottom:14px"></div>
+      {body}
+    </div>
+    <div class="auth-foot">本地优先 · 全功能媒体处理工作台</div>
+  </div>
+  <div class="toast-wrap" id="toastWrap"></div>
+  <script>
+  window.showToast = function(msg, type){{
+    type = type || 'info';
+    var wrap = document.getElementById('toastWrap'); if(!wrap) return;
+    var t = document.createElement('div'); t.className = 'toast toast-' + type;
+    t.innerHTML = '<span class="toast-dot"></span><span>' + msg + '</span>';
+    wrap.appendChild(t);
+    setTimeout(function(){{ t.classList.add('out'); setTimeout(function(){{ t.remove(); }}, 250); }}, 2600);
+  }};
+  (function(){{
+    var f = document.getElementById('authForm'); if(!f) return;
+    f.addEventListener('submit', function(e){{
+      e.preventDefault();
+      var fd = new FormData(f);
+      var payload = Object.fromEntries(fd.entries());
+      var action = f.getAttribute('data-action');
+      if(action==='register'){{
+        if(payload.password.length<6){{ showAuthError('密码至少 6 位'); return; }}
+        if(payload.password!==payload.confirm){{ showAuthError('两次密码不一致'); return; }}
+      }}
+      fetch('/api/auth/'+action, {{method:'POST', headers:{{'Content-Type':'application/json'}}, body: JSON.stringify(payload)}})
+        .then(function(r){{return r.json().then(function(d){{return {{ok:r.ok, d:d}};}});}})
+        .then(function(o){{
+          if(o.ok){{ location.href = (new URLSearchParams(location.search).get('next')) || '/app'; }}
+          else {{ showAuthError(o.d.error || '操作失败'); }}
+        }}).catch(function(){{ showAuthError('网络错误'); }});
+    }});
+    function showAuthError(msg){{
+      var box = document.getElementById('authError');
+      if(box){{ box.textContent = msg; box.style.display='block'; }}
+    }}
+  }})();
+  </script>
 </body>
 </html>'''
 
@@ -1707,6 +1887,109 @@ def assistant_shell(title: str, body: str) -> str:
 </script>
 </body>
 </html>'''
+
+
+def users_body(user: dict | None = None) -> str:
+    me_script = f'<script>window.__me = {user["id"] if user else 0};</script>' if user else ''
+    return me_script + '''
+    <p class="page-desc">管理工作台账号 · 新增 / 禁用 / 调整角色</p>
+    <div class="card">
+      <div class="section-head">
+        <span class="section-title">用户列表</span>
+        <button class="btn btn-primary" id="addUserBtn">+ 新增用户</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="userTable">
+          <thead><tr><th>ID</th><th>用户名</th><th>昵称</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+          <tbody id="userRows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-mask" id="userModal" style="display:none">
+      <div class="modal">
+        <div class="modal-head"><span>新增用户</span><button class="modal-close" id="userClose" type="button">×</button></div>
+        <div class="modal-body">
+          <label class="field-label">用户名</label>
+          <input class="input" id="uUsername" placeholder="登录用，唯一" />
+          <label class="field-label mt-12">昵称</label>
+          <input class="input" id="uDisplayName" placeholder="显示名称（可选）" />
+          <label class="field-label mt-12">密码</label>
+          <input class="input" id="uPassword" type="password" placeholder="至少 6 位" />
+          <label class="field-label mt-12">角色</label>
+          <select class="select" id="uRole"><option value="user">普通用户</option><option value="admin">管理员</option></select>
+          <div class="muted mt-12" id="userMsg"></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn" id="userCancel" type="button">取消</button>
+          <button class="btn btn-primary" id="userSave" type="button">创建</button>
+        </div>
+      </div>
+    </div>
+    ''' + _USERS_SCRIPT
+
+
+_USERS_SCRIPT = '''
+<script>
+(function(){
+  var rows = document.getElementById('userRows');
+  function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function load(){
+    fetch('/api/users').then(function(r){return r.json();}).then(function(d){
+      if(d.error){ rows.innerHTML='<tr><td colspan="7" class="muted">'+esc(d.error)+'</td></tr>'; return; }
+      if(!d.users.length){ rows.innerHTML='<tr><td colspan="7" class="muted">暂无用户</td></tr>'; return; }
+      rows.innerHTML = d.users.map(function(u){
+        var roleTag = u.role==='admin' ? '<span class="tag tag-accent">管理员</span>' : '<span class="tag">普通用户</span>';
+        var stTag = u.status==='active' ? '<span class="tag tag-ok">启用</span>' : '<span class="tag tag-off">禁用</span>';
+        var me = (window.__me && u.id===window.__me);
+        var toggle = '<button class="btn btn-sm" data-act="toggle" data-id="'+u.id+'" data-status="'+u.status+'" '+(me?'disabled':'')+'>'+(u.status==='active'?'禁用':'启用')+'</button>';
+        var roleBtn = '<button class="btn btn-sm" data-act="role" data-id="'+u.id+'" data-role="'+u.role+'">'+(u.role==='admin'?'降为普通':'升为管理员')+'</button>';
+        var del = '<button class="btn btn-sm danger" data-act="del" data-id="'+u.id+'" '+(me?'disabled':'')+'>删除</button>';
+        return '<tr><td>'+u.id+'</td><td>'+esc(u.username)+'</td><td>'+esc(u.display_name||'')+'</td><td>'+roleTag+'</td><td>'+stTag+'</td><td class="font-mono">'+esc(u.created_at||'')+'</td><td>'+toggle+' '+roleBtn+' '+del+'</td></tr>';
+      }).join('');
+    }).catch(function(){ rows.innerHTML='<tr><td colspan="7" class="muted">加载失败</td></tr>'; });
+  }
+  rows.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-act]'); if(!b) return;
+    var id = b.getAttribute('data-id'); var act = b.getAttribute('data-act');
+    if(act==='del'){
+      if(!confirm('确认删除该用户？此操作不可撤销。')) return;
+      fetch('/api/users/'+id, {method:'DELETE'}).then(function(r){ return r.json().then(function(d){return {ok:r.ok,d:d};}); })
+        .then(function(o){ if(o.ok) load(); else showToast(o.d.error||'删除失败','error'); });
+      return;
+    }
+    var payload = {};
+    if(act==='toggle'){ payload.status = (b.getAttribute('data-status')==='active')?'disabled':'active'; }
+    else if(act==='role'){ payload.role = (b.getAttribute('data-role')==='admin')?'user':'admin'; }
+    fetch('/api/users/'+id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+      .then(function(r){ return r.json().then(function(d){return {ok:r.ok,d:d};}); })
+      .then(function(o){ if(o.ok) load(); else showToast(o.d.error||'操作失败','error'); });
+  });
+  load();
+
+  var modal = document.getElementById('userModal');
+  document.getElementById('addUserBtn').addEventListener('click', function(){ modal.style.display='flex'; document.getElementById('userMsg').textContent=''; });
+  function closeUser(){ modal.style.display='none'; }
+  document.getElementById('userClose').addEventListener('click', closeUser);
+  document.getElementById('userCancel').addEventListener('click', closeUser);
+  modal.addEventListener('click', function(e){ if(e.target===modal) closeUser(); });
+  document.getElementById('userSave').addEventListener('click', function(){
+    var username = document.getElementById('uUsername').value.trim();
+    var password = document.getElementById('uPassword').value;
+    var role = document.getElementById('uRole').value;
+    var display_name = document.getElementById('uDisplayName').value.trim();
+    var msg = document.getElementById('userMsg');
+    if(!username || !password){ msg.textContent='用户名和密码不能为空'; return; }
+    if(password.length<6){ msg.textContent='密码至少 6 位'; return; }
+    msg.textContent='创建中…';
+    fetch('/api/users', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:username, password:password, role:role, display_name:display_name})})
+      .then(function(r){ return r.json().then(function(d){return {ok:r.ok,d:d};}); })
+      .then(function(o){ if(o.ok){ closeUser(); load(); } else { msg.textContent=o.d.error||'创建失败'; } })
+      .catch(function(){ msg.textContent='网络错误'; });
+  });
+})();
+</script>
+'''
 
 
 def dashboard_body() -> str:
@@ -3090,46 +3373,238 @@ async def index():
     return (PROJECT_ROOT / "templates" / "landing.html").read_text(encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------
+# 登录 / 注册 / 退出
+# ---------------------------------------------------------------------------
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    body = '''
+    <form id="authForm" data-action="login">
+      <label class="field-label">用户名</label>
+      <input class="input" name="username" placeholder="请输入用户名" autocomplete="username" required>
+      <label class="field-label mt-12">密码</label>
+      <input class="input" name="password" type="password" placeholder="请输入密码" autocomplete="current-password" required>
+      <button class="btn btn-primary" style="width:100%;margin-top:18px" type="submit">登录</button>
+    </form>
+    <div class="auth-switch">还没有账号？<a href="/register">立即注册</a></div>
+    '''
+    return HTMLResponse(auth_shell("登录", body))
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page():
+    body = '''
+    <form id="authForm" data-action="register">
+      <label class="field-label">用户名</label>
+      <input class="input" name="username" placeholder="登录用，唯一" autocomplete="username" required>
+      <label class="field-label mt-12">昵称</label>
+      <input class="input" name="display_name" placeholder="显示名称（可选）">
+      <label class="field-label mt-12">密码</label>
+      <input class="input" name="password" type="password" placeholder="至少 6 位" autocomplete="new-password" required>
+      <label class="field-label mt-12">确认密码</label>
+      <input class="input" name="confirm" type="password" placeholder="再次输入密码" autocomplete="new-password" required>
+      <button class="btn btn-primary" style="width:100%;margin-top:18px" type="submit">注册</button>
+    </form>
+    <div class="auth-switch">已有账号？<a href="/login">返回登录</a></div>
+    '''
+    return HTMLResponse(auth_shell("注册", body))
+
+
+@app.post("/api/auth/register")
+async def api_register(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    confirm = data.get("confirm") or ""
+    display_name = (data.get("display_name") or "").strip()
+    if not username or not password:
+        return JSONResponse({"error": "用户名和密码不能为空"}, status_code=400)
+    if len(password) < 6:
+        return JSONResponse({"error": "密码至少 6 位"}, status_code=400)
+    if password != confirm:
+        return JSONResponse({"error": "两次密码不一致"}, status_code=400)
+    if db.get_user_by_username(username):
+        return JSONResponse({"error": "用户名已存在"}, status_code=409)
+    user = auth.register_user(username, password, display_name=display_name)
+    sid = auth.create_session(user["id"])
+    resp = JSONResponse({"ok": True, "user": user})
+    resp.set_cookie(auth.SESSION_COOKIE, sid, max_age=auth.SESSION_MAX_AGE,
+                    httponly=True, samesite="lax", path="/")
+    return resp
+
+
+@app.post("/api/auth/login")
+async def api_login(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    user = db.get_user_by_username(username)
+    if not user or not auth.verify_password(password, user["password_hash"]):
+        return JSONResponse({"error": "用户名或密码错误"}, status_code=401)
+    if user.get("status") != "active":
+        return JSONResponse({"error": "账号已被禁用"}, status_code=403)
+    sid = auth.create_session(user["id"])
+    pub = auth._public_user(user)
+    resp = JSONResponse({"ok": True, "user": pub})
+    resp.set_cookie(auth.SESSION_COOKIE, sid, max_age=auth.SESSION_MAX_AGE,
+                    httponly=True, samesite="lax", path="/")
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def api_logout(request: Request):
+    sid = request.cookies.get(auth.SESSION_COOKIE)
+    auth.delete_session(sid)
+    resp = RedirectResponse("/login", status_code=302)
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/")
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# 用户管理（仅管理员）
+# ---------------------------------------------------------------------------
+
+@app.get("/app/users", response_class=HTMLResponse)
+async def app_users(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user or user.get("role") != "admin":
+        return RedirectResponse("/app/dashboard", status_code=302)
+    return HTMLResponse(page_shell("用户管理", "users", users_body(user), user=user))
+
+
+@app.get("/api/users")
+async def api_list_users(request: Request):
+    if request.state.user.get("role") != "admin":
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    users = [auth._public_user(u) for u in db.list_users()]
+    return {"users": users}
+
+
+@app.post("/api/users")
+async def api_create_user(request: Request):
+    if request.state.user.get("role") != "admin":
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    role = data.get("role") or "user"
+    display_name = (data.get("display_name") or "").strip()
+    if not username or not password:
+        return JSONResponse({"error": "用户名和密码不能为空"}, status_code=400)
+    if len(password) < 6:
+        return JSONResponse({"error": "密码至少 6 位"}, status_code=400)
+    if role not in ("admin", "user"):
+        role = "user"
+    if db.get_user_by_username(username):
+        return JSONResponse({"error": "用户名已存在"}, status_code=409)
+    new = auth.register_user(username, password, display_name=display_name, role=role)
+    return {"ok": True, "user": new}
+
+
+@app.put("/api/users/{uid}")
+async def api_update_user(uid: int, request: Request):
+    if request.state.user.get("role") != "admin":
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    fields = {}
+    if "role" in data and data["role"] in ("admin", "user"):
+        fields["role"] = data["role"]
+    if "status" in data and data["status"] in ("active", "disabled"):
+        fields["status"] = data["status"]
+    if not fields:
+        return JSONResponse({"error": "无有效字段"}, status_code=400)
+    if uid == request.state.user["id"] and ("status" in fields or "role" in fields):
+        return JSONResponse({"error": "不能操作自己的账号状态/角色"}, status_code=400)
+    if not db.get_user(uid):
+        return JSONResponse({"error": "用户不存在"}, status_code=404)
+    db.update_user(uid, **fields)
+    return {"ok": True, "user": auth._public_user(db.get_user(uid))}
+
+
+@app.delete("/api/users/{uid}")
+async def api_delete_user(uid: int, request: Request):
+    if request.state.user.get("role") != "admin":
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if uid == request.state.user["id"]:
+        return JSONResponse({"error": "不能删除自己"}, status_code=400)
+    if not db.get_user(uid):
+        return JSONResponse({"error": "用户不存在"}, status_code=404)
+    db.delete_user(uid)
+    return {"ok": True}
+
+
+@app.post("/api/users/me")
+async def api_change_password(request: Request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    cur = data.get("current_password") or ""
+    nv = data.get("new_password") or ""
+    if len(nv) < 6:
+        return JSONResponse({"error": "新密码至少 6 位"}, status_code=400)
+    db_user = db.get_user(request.state.user["id"])
+    if not db_user or not auth.verify_password(cur, db_user["password_hash"]):
+        return JSONResponse({"error": "当前密码错误"}, status_code=401)
+    db.set_password(request.state.user["id"], auth.hash_password(nv))
+    return {"ok": True}
+
+
 @app.get("/app", response_class=HTMLResponse)
-async def app_dashboard():
+async def app_dashboard(request: Request):
     """工作台仪表盘。"""
-    return HTMLResponse(page_shell("仪表盘", "dashboard", dashboard_body()))
+    user = getattr(request.state, "user", None)
+    return HTMLResponse(page_shell("仪表盘", "dashboard", dashboard_body(), user=user))
 
 
 @app.get("/app/{page}", response_class=HTMLResponse)
-async def app_page(page: str):
+async def app_page(page: str, request: Request):
+    user = getattr(request.state, "user", None)
     if page not in PAGE_TITLES:
         return HTMLResponse(
-            page_shell("未找到", "dashboard", '<div class="empty-state">页面不存在</div>'),
+            page_shell("未找到", "dashboard", '<div class="empty-state">页面不存在</div>', user=user),
             status_code=404,
         )
     if page == "dashboard":
-        return page_shell("仪表盘", "dashboard", dashboard_body())
+        return page_shell("仪表盘", "dashboard", dashboard_body(), user=user)
     if page == "subtitle":
-        return page_shell("字幕提取", "subtitle", subtitle_body())
+        return page_shell("字幕提取", "subtitle", subtitle_body(), user=user)
     if page == "ocr":
-        return page_shell("图片识别", "ocr", ocr_body())
+        return page_shell("图片识别", "ocr", ocr_body(), user=user)
     if page == "transcribe":
-        return page_shell("语音转写", "transcribe", transcribe_body())
+        return page_shell("语音转写", "transcribe", transcribe_body(), user=user)
     if page == "record":
-        return page_shell("系统录音", "record", record_body())
+        return page_shell("系统录音", "record", record_body(), user=user)
     if page == "comment":
-        return page_shell("视频评论", "comment", comment_body())
+        return page_shell("视频评论", "comment", comment_body(), user=user)
     if page == "projects":
-        return page_shell("项目管理", "projects", projects_body())
+        return page_shell("项目管理", "projects", projects_body(), user=user)
     if page == "settings":
-        return page_shell("设置", "settings", settings_body())
+        return page_shell("设置", "settings", settings_body(), user=user)
     if page == "dubbing":
-        return page_shell("AI 配音", "dubbing", tts_body())
+        return page_shell("AI 配音", "dubbing", tts_body(), user=user)
     if page == "batch-dubbing":
-        return page_shell("多人批量配音", "batch-dubbing", batch_body())
+        return page_shell("多人批量配音", "batch-dubbing", batch_body(), user=user)
     if page == "sound-library":
-        return page_shell("声音库", "sound-library", sound_library_body())
+        return page_shell("声音库", "sound-library", sound_library_body(), user=user)
     if page == "voice-clone":
-        return page_shell("声音克隆", "voice-clone", voice_clone_body())
+        return page_shell("声音克隆", "voice-clone", voice_clone_body(), user=user)
     if page == "assistant":
         return assistant_shell("AI 助手", assistant_body())
-    return page_shell(PAGE_TITLES[page], page, stub_body(PAGE_TITLES[page], page))
+    return page_shell(PAGE_TITLES[page], page, stub_body(PAGE_TITLES[page], page), user=user)
 
 
 @app.get("/tools", response_class=HTMLResponse)

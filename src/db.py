@@ -70,6 +70,23 @@ def init_db() -> None:
                 meta        TEXT DEFAULT '{}',
                 created_at  TEXT
             );
+            CREATE TABLE IF NOT EXISTS users (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                username     TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role         TEXT DEFAULT 'user',
+                display_name TEXT DEFAULT '',
+                status       TEXT DEFAULT 'active',
+                created_at   TEXT,
+                updated_at   TEXT
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  TEXT NOT NULL UNIQUE,
+                user_id     INTEGER NOT NULL,
+                created_at  TEXT,
+                expires_at  TEXT
+            );
             """
         )
         conn.commit()
@@ -261,5 +278,125 @@ def create_voice(name: str, gender: str = "", tags: str = "", provider: str = ""
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# users（账号）
+# ---------------------------------------------------------------------------
+
+def count_users() -> int:
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+        return int(row["c"])
+    finally:
+        conn.close()
+
+
+def create_user(username: str, password_hash: str, role: str = "user",
+                display_name: str = "") -> int:
+    conn = get_conn()
+    try:
+        now = _now()
+        cur = conn.execute(
+            "INSERT INTO users(username, password_hash, role, display_name, status, "
+            "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (username, password_hash, role, display_name, "active", now, now),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_user(uid: int) -> dict | None:
+    conn = get_conn()
+    try:
+        r = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def get_user_by_username(username: str) -> dict | None:
+    conn = get_conn()
+    try:
+        r = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def list_users() -> list[dict]:
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_user(uid: int, **fields) -> None:
+    if not fields:
+        return
+    fields["updated_at"] = _now()
+    cols = ", ".join(f"{k}=?" for k in fields)
+    conn = get_conn()
+    try:
+        conn.execute(f"UPDATE users SET {cols} WHERE id=?", (*fields.values(), uid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_user(uid: int) -> None:
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_password(uid: int, password_hash: str) -> None:
+    update_user(uid, password_hash=password_hash)
+
+
+# ---------------------------------------------------------------------------
+# sessions（登录会话）
+# ---------------------------------------------------------------------------
+
+def create_session(session_id: str, user_id: int, expires_at: str) -> None:
+    conn = get_conn()
+    try:
+        now = _now()
+        conn.execute(
+            "INSERT INTO sessions(session_id, user_id, created_at, expires_at) "
+            "VALUES(?, ?, ?, ?)",
+            (session_id, user_id, now, expires_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_session(session_id: str) -> dict | None:
+    conn = get_conn()
+    try:
+        r = conn.execute(
+            "SELECT * FROM sessions WHERE session_id=?", (session_id,)
+        ).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def delete_session(session_id: str) -> None:
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
+        conn.commit()
     finally:
         conn.close()
