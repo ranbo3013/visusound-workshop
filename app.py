@@ -1526,7 +1526,7 @@ PAGE_TITLES = {
 
 
 def _nav_html(active: str) -> str:
-    out = ['<div class="sidebar-brand"><div class="sidebar-logo">声</div>'
+    out = ['<div class="sidebar-brand"><img src="/static/images/logo-icon.png" alt="声画工坊" class="sidebar-logo-img">'
            '<div><div class="sidebar-brand-name">声画工坊</div>'
            '<div class="sidebar-brand-sub">VisuSound</div></div></div>']
     out.append('<div class="sidebar-nav">')
@@ -1563,6 +1563,9 @@ def page_shell(title: str, active: str, body: str) -> str:
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <script>try{{var t=localStorage.getItem('vs-theme');if(t)document.documentElement.setAttribute('data-theme',t);}}catch(e){{}}</script>
 </head>
 <body>

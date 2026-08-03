@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
 <style>
   :root {
     --bg: #0a0a0f;
@@ -54,7 +57,7 @@
   header.site { position: sticky; top: 0; z-index: 50; background: rgba(10,10,15,.8); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
   .nav { display: flex; align-items: center; gap: 28px; height: 64px; }
   .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
-  .brand .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--purple)); display: grid; place-items: center; color: #fff; font-weight: 800; }
+  .brand .logo { width: 30px; height: 30px; border-radius: 9px; object-fit: cover; display: block; }
   .nav-links { display: flex; gap: 26px; margin-left: 12px; }
   .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; transition: color .15s; }
   .nav-links a:hover { color: var(--text); }
@@ -157,7 +160,7 @@
 <header class="site">
   <div class="container nav">
     <a class="brand" href="/">
-      <span class="logo">声</span>
+      <img src="/static/images/logo-icon.png" alt="声画工坊" class="logo">
       声画工坊
     </a>
     <nav class="nav-links">
@@ -349,7 +352,7 @@
   <div class="container">
     <div class="foot-grid">
       <div class="foot-brand">
-        <a class="brand" href="/"><span class="logo">声</span>声画工坊</a>
+        <a class="brand" href="/"><img src="/static/images/logo-icon.png" alt="声画工坊" class="logo">声画工坊</a>
         <p>音视频内容生产 · 字幕提取 · AI 配音 · 声音克隆</p>
       </div>
       <div class="foot-col">
