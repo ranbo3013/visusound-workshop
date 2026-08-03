@@ -111,14 +111,21 @@ async def api_extract(
             # Remote video — download first
             st = classify_source(clean_url)
 
-            # Access check for remote
+            # Access pre-check for remote (SOFT gate).
+            # 这里用 HEAD 请求预检，而平台/直链常对 HEAD 返回 403（防盗链常规
+            # 拦截），但真正的下载走 fetch_remote_video（带 cookie/浏览器 cookie
+            # 的 GET）往往能成功。因此除 DRM 这类明确不支持的情况外，预检失败
+            # 一律降级为 warning，交给真实下载逻辑去判定，避免误杀可提取的 URL。
             if st != SourceType.LOCAL_FILE:
                 ac = check_access(clean_url, cookies=cookies if cookies else None)
                 if not ac.accessible:
-                    return JSONResponse(
-                        {"error": f"Access denied: {ac.error_message}"},
-                        status_code=403,
-                    )
+                    if ac.drm_detected:
+                        return JSONResponse(
+                            {"error": f"Access denied: {ac.error_message}"},
+                            status_code=403,
+                        )
+                    print(f"[WARN] check_access 预检未通过（{ac.error_message}），"
+                          f"仍尝试真实下载: {clean_url}")
 
             # Use temp dir for download
             dl_dir = PROJECT_ROOT / "static" / "downloads"
@@ -964,7 +971,11 @@ def _analyze_video_text(video_url: str) -> tuple[str, str]:
         if st != SourceType.LOCAL_FILE:
             ac = check_access(clean_url)
             if not ac.accessible:
-                return "", ""
+                if ac.drm_detected:
+                    return "", ""
+                # 非 DRM 的预检失败（如 HEAD 403）多为误判，交给真实下载尝试
+                print(f"[WARN] analyze_video_text 中 check_access 软失败"
+                      f"（{ac.error_message}），仍尝试下载: {clean_url}")
         dl_dir = PROJECT_ROOT / "static" / "downloads"
         dl_dir.mkdir(parents=True, exist_ok=True)
         local_path = fetch_remote_video(
