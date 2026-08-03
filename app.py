@@ -1708,10 +1708,7 @@ def assistant_shell(title: str, body: str) -> str:
 
 def dashboard_body() -> str:
     return '''
-    <div class="page-head">
-      <h1>仪表盘</h1>
-      <p>本地优先 · 全功能媒体处理工作台</p>
-    </div>
+    <p class="page-desc">本地优先 · 全功能媒体处理工作台</p>
 
     <div class="grid grid-4">
       <div class="card stat-card">
@@ -2153,7 +2150,7 @@ def subtitle_body() -> str:
 
 def ocr_body() -> str:
     return '''
-    <div class="page-head"><h1>图片识别</h1><p>上传图片，OCR 提取其中文字 · 中英双语</p></div>
+    <p class="page-desc">上传图片，OCR 提取其中文字 · 中英双语</p>
     <div class="card">
       <div class="section-head"><span class="section-title">识别配置</span></div>
       <div class="upload-zone" id="fileDrop">
@@ -2219,10 +2216,7 @@ def ocr_body() -> str:
 
 def projects_body() -> str:
     return '''
-    <div class="page-head">
-      <h1>项目管理</h1>
-      <p>归档你的音视频工程 · 本地 SQLite 持久化</p>
-    </div>
+    <p class="page-desc">归档你的音视频工程 · 本地 SQLite 持久化</p>
 
     <div class="card mb-20">
       <div class="section-head"><span class="section-title">新建项目</span></div>
@@ -2285,7 +2279,7 @@ def projects_body() -> str:
 
 def settings_body() -> str:
     return '''
-    <div class="page-head"><h1>设置</h1><p>工作台偏好与密钥状态 · 本地持久化</p></div>
+    <p class="page-desc">工作台偏好与密钥状态 · 本地持久化</p>
 
     <div class="grid grid-2">
       <div class="card">
@@ -2391,7 +2385,7 @@ def settings_body() -> str:
 
 def tts_body() -> str:
     return '''
-    <div class="page-head"><h1>AI 配音</h1><p>文本转语音 · 多情绪、多参数控制 <span id="ttsBadge"></span></p></div>
+    <p class="page-desc">文本转语音 · 多情绪、多参数控制 <span id="ttsBadge"></span></p>
     <div class="grid grid-2">
       <div class="card">
         <div class="section-head"><span class="section-title">文本输入</span></div>
@@ -2492,7 +2486,7 @@ def tts_body() -> str:
 
 def sound_library_body() -> str:
     return '''
-    <div class="page-head"><h1>声音库</h1><p>管理你的音色 · 预置音色 + 克隆音色</p></div>
+    <p class="page-desc">管理你的音色 · 预置音色 + 克隆音色</p>
     <div class="card">
       <div class="section-head"><span class="section-title">全部音色</span><span class="tag" id="voiceCount" style="margin-left:auto">0</span></div>
       <div class="grid grid-3" id="voiceGrid"></div>
@@ -2525,7 +2519,7 @@ def sound_library_body() -> str:
 
 def batch_body() -> str:
     return '''
-    <div class="page-head"><h1>多人批量配音</h1><p>多角色分镜批量合成 · 每行一段，支持「角色名:文本」</p></div>
+    <p class="page-desc">多角色分镜批量合成 · 每行一段，支持「角色名:文本」</p>
     <div class="card">
       <div class="section-head"><span class="section-title">批量文案</span><span class="tag" id="voiceCount" style="margin-left:auto"></span></div>
       <textarea class="input" id="batchText" rows="10" placeholder="男主:今天我们来聊聊这个项目。\n女主:听起来很有意思呢。\n旁白:这是一段演示文案。"></textarea>
@@ -2576,7 +2570,7 @@ def batch_body() -> str:
 
 def voice_clone_body() -> str:
     return '''
-    <div class="page-head"><h1>声音克隆</h1><p>上传人声片段 → 克隆专属音色 · 内置合规授权提醒</p></div>
+    <p class="page-desc">上传人声片段 → 克隆专属音色 · 内置合规授权提醒</p>
     <div class="card">
       <div class="section-head"><span class="section-title">第 1 步 · 输入视频/音频来源</span></div>
       <div class="upload-zone" id="srcDrop">
@@ -2653,7 +2647,7 @@ def voice_clone_body() -> str:
 
 def stub_body(title: str, page: str) -> str:
     return f'''
-    <div class="page-head"><h1>{title}</h1><p>该模块将在后续开发阶段实现。</p></div>
+    <p class="page-desc">该模块将在后续开发阶段实现。</p>
     <div class="empty-state">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
       <div>「{title}」模块开发中</div>
@@ -2664,7 +2658,7 @@ def stub_body(title: str, page: str) -> str:
 
 def transcribe_body() -> str:
     return '''
-    <div class="page-head"><h1>语音转写</h1><p>Whisper 语音识别 · 自动简繁转换 · 输出带时间轴文本</p></div>
+    <p class="page-desc">Whisper 语音识别 · 自动简繁转换 · 输出带时间轴文本</p>
     <div class="card">
       <div class="section-head"><span class="section-title">转写配置</span></div>
       <div class="row row-wrap" style="gap:8px;margin-bottom:18px">
@@ -2721,7 +2715,7 @@ def transcribe_body() -> str:
 
 def record_body() -> str:
     return '''
-    <div class="page-head"><h1>系统录音</h1><p>采集 macOS 系统音频（经 BlackHole 虚拟声卡）· 生成 WAV / MP3</p></div>
+    <p class="page-desc">采集 macOS 系统音频（经 BlackHole 虚拟声卡）· 生成 WAV / MP3</p>
     <div class="card">
       <div class="section-head"><span class="section-title">录音设置</span></div>
       <div style="max-width:280px"><label class="field-label">输出格式</label>
@@ -2784,10 +2778,7 @@ def record_body() -> str:
 
 def comment_body() -> str:
     return '''
-    <div class="page-head">
-      <h1>视频评论</h1>
-      <p>粘贴抖音视频链接，AI 分析内容并生成字数可控的评论 · Mock 预览版</p>
-    </div>
+    <p class="page-desc">粘贴抖音 / 小红书链接，AI 分析内容并生成字数可控的评论</p>
 
     <div class="card">
       <div class="section-head"><span class="section-title">生成配置</span></div>
