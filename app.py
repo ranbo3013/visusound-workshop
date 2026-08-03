@@ -636,6 +636,108 @@ async def comment_transcribe_record(
     return _transcribe_with_whisper(audio_path, language, model_size, cleanup_source=False)
 
 
+@app.post("/api/comment/fetch-xhs")
+async def api_comment_fetch_xhs(url: str = Form(...)):
+    """解析小红书笔记链接，提取文案（标题+正文+话题标签+作者），统一成 Note 结构。
+
+    主路径：yt-dlp 抓 description + tags（图文/视频笔记的文案都在 description 里，
+    比 Whisper 转写更快更准）；若 description 为空/过短则下视频 Whisper 转写兜底。
+    作者昵称 yt-dlp 拿不到（uploader=None），用 uploader_id 兜底。
+    """
+    import subprocess as _sp
+    import json as _json
+    import re as _re
+    from src.fetcher import YT_DLP_CMD
+
+    clean = (url or "").strip()
+    if not clean:
+        return JSONResponse({"error": "请提供小红书链接"}, status_code=400)
+    try:
+        # Step 1: 仅抓 metadata（不下载视频）
+        cmd = YT_DLP_CMD + [
+            "--simulate", "--cookies-from-browser", "chrome",
+            "--no-warnings", "--socket-timeout", "40", "-J", clean,
+        ]
+        proc = await asyncio.to_thread(
+            _sp.run, cmd, capture_output=True, text=True, timeout=120
+        )
+        if proc.returncode != 0:
+            errline = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else "未知错误"
+            return JSONResponse(
+                {"error": "解析失败：" + errline + "（请确认 Chrome 已登录小红书）"},
+                status_code=400,
+            )
+        info = _json.loads(proc.stdout)
+    except _sp.TimeoutExpired:
+        return JSONResponse(
+            {"error": "解析超时（小红书可能要求登录，请确认 Chrome 已登录小红书）"},
+            status_code=408,
+        )
+    except Exception as e:
+        return JSONResponse({"error": "解析异常：" + str(e)}, status_code=500)
+
+    title = (info.get("title") or "").strip()
+    raw_desc = (info.get("description") or "").strip()
+    # 清洗：去掉 #话题[话题]# 噪声（tags 已单独提取）
+    body = _re.sub(r"#[^#]*?\[话题\]#", "", raw_desc).strip()
+    body = _re.sub(r"\n{3,}", "\n\n", body)
+    tags = info.get("tags") or []
+    uploader = info.get("uploader")
+    uploader_id = info.get("uploader_id") or info.get("channel_id") or ""
+    author = uploader if uploader else ("小红书用户" + (f"（{uploader_id}）" if uploader_id else ""))
+    duration = info.get("duration")
+    note_type = "video" if (duration and duration > 0) else "image_text"
+    webpage = info.get("webpage_url") or clean
+    transcript = None
+
+    # Step 2: 兜底——description 过短则下视频 Whisper 转写
+    if len(body) < 20:
+        try:
+            dl_dir = PROJECT_ROOT / "static" / "downloads"
+            dl_dir.mkdir(parents=True, exist_ok=True)
+            local_path = fetch_remote_video(
+                url=clean, output_dir=str(dl_dir),
+                cookies_from_browser="chrome", progress=False, timeout=300,
+            )
+            if local_path:
+                tr_resp = await asyncio.to_thread(
+                    _transcribe_with_whisper, local_path, "zh", "small", True
+                )
+                tr_data = _json.loads(tr_resp.body.decode())
+                transcript = tr_data.get("text", "")
+                body = (transcript or "").strip()
+                note_type = "video"
+        except Exception as e:
+            print(f"[XHS] 兜底转写失败: {e}")
+
+    # Step 3: 组合可编辑文案（正文 + 话题标签）
+    if tags:
+        tag_line = " ".join("#" + t for t in tags)
+        editable = (body + "\n\n" + tag_line).strip() if body else tag_line
+    else:
+        editable = body
+
+    # title 兜底：视频/图文笔记 yt-dlp 常给 "XiaoHongShu video #id"，用正文首句代替
+    final_title = title
+    if final_title.startswith("XiaoHongShu") and body:
+        _first = body.split("\n")[0].strip()
+        final_title = _first[:30] if _first else final_title
+
+    return JSONResponse({
+        "success": True,
+        "note": {
+            "type": note_type,
+            "title": final_title,
+            "body": body,
+            "tags": tags,
+            "author": author,
+            "url": webpage,
+            "transcript": transcript,
+            "editable_text": editable,
+        },
+    })
+
+
 # ---------------------------------------------------------------------------
 # API: Audio Recording (macOS BlackHole + FFmpeg)
 # ---------------------------------------------------------------------------
@@ -2697,6 +2799,14 @@ def comment_body() -> str:
         <input class="input" id="videoUrl" placeholder="https://v.douyin.com/xxxx/ 或 完整视频地址" />
       </div>
       <div style="margin-bottom:16px">
+        <label class="field-label">小红书笔记链接</label>
+        <div class="row" style="gap:10px">
+          <input class="input" id="xhsUrl" placeholder="https://www.xiaohongshu.com/discovery/item/..." style="flex:1" />
+          <button class="btn btn-secondary btn-sm" id="xhsBtn">解析文案</button>
+        </div>
+        <div class="notice notice-accent" id="xhsNotice" style="margin-top:8px;display:none"><span></span></div>
+      </div>
+      <div style="margin-bottom:16px">
         <label class="field-label">或直接粘贴视频文案（可选，免联网分析）</label>
         <textarea class="input" id="rawText" rows="2" placeholder="把视频字幕 / 口播文案粘贴到这里…"></textarea>
       </div>
@@ -2840,6 +2950,33 @@ def comment_body() -> str:
           $('recIndicator').style.display = 'none';
           $('recordBtn').style.display = ''; $('recordBtn').disabled = false;
           $('recHint').style.display = '';
+        }
+      });
+      // —— 小红书笔记 → 解析文案 → 填进文案框 → 分析评论 ——
+      const xhsNotice = $('xhsNotice');
+      const setXhsNotice = (cls, msg) => { xhsNotice.className = 'notice ' + cls; xhsNotice.querySelector('span').textContent = msg; xhsNotice.style.display = ''; };
+      $('xhsBtn').addEventListener('click', async () => {
+        const u = $('xhsUrl').value.trim();
+        if (!u) { alert('请粘贴小红书笔记链接'); return; }
+        $('xhsBtn').disabled = true; $('xhsBtn').textContent = '解析中…';
+        setXhsNotice('notice-amber', '正在解析小红书笔记文案（需 Chrome 已登录小红书）…');
+        try {
+          const fd = new FormData(); fd.append('url', u);
+          const r = await fetch('/api/comment/fetch-xhs', {method:'POST', body: fd});
+          const d = await r.json();
+          if (!d.success) { setXhsNotice('notice-amber', '解析失败：' + (d.error || '未知错误')); return; }
+          const n = d.note;
+          $('rawText').value = n.editable_text || '';
+          $('videoUrl').value = '';
+          const typeName = n.type === 'video' ? '视频笔记' : '图文笔记';
+          const extra = n.transcript ? '（description 过短，已用 Whisper 转写口播）' : '';
+          const tagInfo = n.tags && n.tags.length ? (n.tags.length + ' 个话题，') : '';
+          const bodyInfo = n.body ? (n.body.length + ' 字正文') : '0 字';
+          setXhsNotice('notice-accent', '已解析 ' + typeName + '：' + (n.title ? '《' + n.title + '》' : '') + '，作者 ' + n.author + '，' + tagInfo + bodyInfo + '。文案已填入上方，可核对修改后点「分析文字内容」。' + extra);
+        } catch (err) {
+          setXhsNotice('notice-amber', '请求失败：' + err);
+        } finally {
+          $('xhsBtn').disabled = false; $('xhsBtn').textContent = '解析文案';
         }
       });
       $('transcribeBtn').addEventListener('click', async () => {
